@@ -35,6 +35,7 @@ class _LogsScreenState extends State<LogsScreen> {
   List<String> _months = [];
   List<String> _days = [];
   List<DateTime> _localDates = [];
+  List<DateTime> _firebaseDates = [];
 
   String? _selYear;
   String? _selMonth;
@@ -58,33 +59,9 @@ class _LogsScreenState extends State<LogsScreen> {
   }
 
   // ── fetch helpers ─────────────────────────
-  List<DateTime> _timelineDates() {
-    final start = DateUtils.dateOnly(widget.plant.addedDate);
-    final now = DateUtils.dateOnly(DateTime.now());
-    final planned = widget.plant.harvestDate == null
-        ? now
-        : DateUtils.dateOnly(widget.plant.harvestDate!);
-    final actual = widget.plant.actualHarvestDate == null
-        ? null
-        : DateUtils.dateOnly(widget.plant.actualHarvestDate!);
-    var end = actual ?? (planned.isAfter(now) ? planned : now);
-    if (end.isBefore(start)) end = start;
-
-    final latestAllowed = start.add(const Duration(days: 730));
-    if (end.isAfter(latestAllowed)) end = latestAllowed;
-    return [
-      for (
-        var date = start;
-        !date.isAfter(end);
-        date = date.add(const Duration(days: 1))
-      )
-        date,
-    ];
-  }
-
   List<DateTime> get _availableDates {
     final unique = <String, DateTime>{};
-    for (final date in [..._timelineDates(), ..._localDates]) {
+    for (final date in [..._localDates, ..._firebaseDates]) {
       final clean = DateUtils.dateOnly(date);
       unique[DateFormat('yyyy-MM-dd').format(clean)] = clean;
     }
@@ -98,7 +75,7 @@ class _LogsScreenState extends State<LogsScreen> {
         .map((date) => date.month.toString().padLeft(2, '0'))
         .toSet()
         .toList();
-    values.sort((a, b) => int.parse(b).compareTo(int.parse(a)));
+    values.sort(_sortNumericDesc);
     return values;
   }
 
@@ -112,8 +89,12 @@ class _LogsScreenState extends State<LogsScreen> {
         .map((date) => date.day.toString().padLeft(2, '0'))
         .toSet()
         .toList();
-    values.sort((a, b) => int.parse(b).compareTo(int.parse(a)));
+    values.sort(_sortNumericDesc);
     return values;
+  }
+
+  int _sortNumericDesc(String a, String b) {
+    return (int.tryParse(b) ?? 0).compareTo(int.tryParse(a) ?? 0);
   }
 
   String? _preferredValue(List<String> values, String preferred) {
@@ -127,13 +108,13 @@ class _LogsScreenState extends State<LogsScreen> {
       final localDates = plantId == null
           ? <DateTime>[]
           : await DatabaseHelper.instance.getLogDatesForPlant(plantId);
+      final firebaseDates = await FirebaseHttp.instance.fetchAvailableDates();
       if (!mounted) return;
 
       _localDates = localDates;
+      _firebaseDates = firebaseDates;
       final dates = _availableDates;
-      final preferred = localDates.isNotEmpty
-          ? localDates.first
-          : DateUtils.dateOnly(DateTime.now());
+      final preferred = dates.isNotEmpty ? dates.first : DateTime.now();
       final years = dates.map((date) => date.year.toString()).toSet().toList()
         ..sort((a, b) => b.compareTo(a));
       final year = _preferredValue(years, preferred.year.toString());
@@ -160,11 +141,8 @@ class _LogsScreenState extends State<LogsScreen> {
         _metaLoading = false;
         _loadError = null;
       });
-      unawaited(_loadRows());
-      unawaited(_mergeFirebaseYears());
-      if (year != null) unawaited(_mergeFirebaseMonths(year));
-      if (year != null && month != null) {
-        unawaited(_mergeFirebaseDays(year, month));
+      if (year != null && month != null && day != null) {
+        unawaited(_loadRows());
       }
     } catch (_) {
       if (!mounted) return;
@@ -172,23 +150,6 @@ class _LogsScreenState extends State<LogsScreen> {
         _metaLoading = false;
         _loadError = 'Unable to load the available sensor log dates.';
       });
-    }
-  }
-
-  Future<void> _mergeFirebaseYears() async {
-    final request = _metadataRequest;
-    final remote = await FirebaseHttp.instance.fetchYears();
-    if (!mounted || request != _metadataRequest) return;
-    final valid = remote.where((value) => int.tryParse(value) != null);
-    final years = {..._years, ...valid}.toList()
-      ..sort((a, b) => b.compareTo(a));
-    final selectedYear = _selYear ?? (years.isEmpty ? null : years.first);
-    setState(() {
-      _years = years;
-      _selYear = selectedYear;
-    });
-    if (selectedYear != null && _months.isEmpty) {
-      unawaited(_mergeFirebaseMonths(selectedYear));
     }
   }
 
@@ -201,7 +162,7 @@ class _LogsScreenState extends State<LogsScreen> {
       return parsed != null && parsed >= 1 && parsed <= 12;
     });
     final months = {..._months, ...valid.map((v) => v.padLeft(2, '0'))}.toList()
-      ..sort((a, b) => int.parse(b).compareTo(int.parse(a)));
+      ..sort(_sortNumericDesc);
     final selectedMonth = _selMonth ?? (months.isEmpty ? null : months.first);
     setState(() {
       _months = months;
@@ -221,15 +182,23 @@ class _LogsScreenState extends State<LogsScreen> {
         _selMonth != month) {
       return;
     }
-    final maxDay = DateUtils.getDaysInMonth(int.parse(year), int.parse(month));
+    final selectedYear = int.tryParse(year);
+    final selectedMonth = int.tryParse(month);
+    if (selectedYear == null || selectedMonth == null) return;
+    final maxDay = DateUtils.getDaysInMonth(selectedYear, selectedMonth);
     final valid = remote.where((value) {
       final parsed = int.tryParse(value);
       return parsed != null && parsed >= 1 && parsed <= maxDay;
     });
+    final remoteDates = valid.map((value) {
+      final parsed = int.tryParse(value) ?? 1;
+      return DateTime(selectedYear, selectedMonth, parsed);
+    });
     final days = {..._days, ...valid.map((v) => v.padLeft(2, '0'))}.toList()
-      ..sort((a, b) => int.parse(b).compareTo(int.parse(a)));
+      ..sort(_sortNumericDesc);
     final selectedDay = _selDay ?? (days.isEmpty ? null : days.first);
     setState(() {
+      _firebaseDates = [..._firebaseDates, ...remoteDates];
       _days = days;
       _selDay = selectedDay;
     });
@@ -300,9 +269,16 @@ class _LogsScreenState extends State<LogsScreen> {
     });
 
     try {
-      final y = int.parse(year);
-      final m = int.parse(month);
-      final d = int.parse(day);
+      final y = int.tryParse(year);
+      final m = int.tryParse(month);
+      final d = int.tryParse(day);
+      if (y == null || m == null || d == null) {
+        throw const FormatException('Invalid selected log date');
+      }
+      final maxDay = m < 1 || m > 12 ? 0 : DateUtils.getDaysInMonth(y, m);
+      if (d < 1 || d > maxDay) {
+        throw const FormatException('Selected log date is out of range');
+      }
       final plantId = widget.plant.id;
       List<Map<String, dynamic>> rows = plantId == null
           ? <Map<String, dynamic>>[]

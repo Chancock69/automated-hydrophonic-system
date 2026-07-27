@@ -56,11 +56,18 @@ class FirebaseHttp {
       if (body == null || body is! Map) return null;
 
       // body is already promoted to Map after the is! guard — no cast needed
-      final keys = body.keys.cast<String>().toList()..sort();
+      final keys =
+          body.keys
+              .map((key) => key.toString())
+              .where(_isReadingTimeKey)
+              .toList()
+            ..sort();
       if (keys.isEmpty) return null;
 
       final latestKey = keys.last;
-      final data = Map<String, dynamic>.from(body[latestKey] as Map);
+      final value = body[latestKey];
+      if (value is! Map) return null;
+      final data = Map<String, dynamic>.from(value);
 
       final ts = _timestampForKey(date, latestKey);
       return SensorSnapshot.fromJson(data, ts);
@@ -101,9 +108,11 @@ class FirebaseHttp {
       final result = <String, SensorSnapshot>{};
       body.forEach((key, value) {
         try {
-          final ts = _timestampForKey(date, key as String);
-          result[key] = SensorSnapshot.fromJson(
-            Map<String, dynamic>.from(value as Map),
+          final keyText = key.toString();
+          if (!_isReadingTimeKey(keyText) || value is! Map) return;
+          final ts = _timestampForKey(date, keyText);
+          result[keyText] = SensorSnapshot.fromJson(
+            Map<String, dynamic>.from(value),
             ts,
           );
         } catch (_) {}
@@ -123,7 +132,7 @@ class FirebaseHttp {
       if (res.statusCode != 200) return [];
       final body = jsonDecode(res.body);
       if (body == null || body is! Map) return [];
-      return body.keys.cast<String>().toList()..sort();
+      return body.keys.map((key) => key.toString()).toList()..sort();
     } catch (_) {
       return [];
     }
@@ -136,7 +145,7 @@ class FirebaseHttp {
       if (res.statusCode != 200) return [];
       final body = jsonDecode(res.body);
       if (body == null || body is! Map) return [];
-      return body.keys.cast<String>().toList()..sort();
+      return body.keys.map((key) => key.toString()).toList()..sort();
     } catch (_) {
       return [];
     }
@@ -149,15 +158,53 @@ class FirebaseHttp {
       if (res.statusCode != 200) return [];
       final body = jsonDecode(res.body);
       if (body == null || body is! Map) return [];
-      return body.keys.cast<String>().toList()..sort();
+      return body.keys.map((key) => key.toString()).toList()..sort();
     } catch (_) {
       return [];
     }
   }
 
   // ── helpers ─────────────────────────────────
+  Future<List<DateTime>> fetchAvailableDates() async {
+    final dates = <DateTime>[];
+    final years = await fetchYears();
+    for (final year in years) {
+      final y = int.tryParse(year);
+      if (y == null) continue;
+
+      final months = await fetchMonths(year);
+      for (final month in months) {
+        final m = int.tryParse(month);
+        if (m == null || m < 1 || m > 12) continue;
+
+        final monthKey = m.toString().padLeft(2, '0');
+        final days = await fetchDays(year, monthKey);
+        for (final day in days) {
+          final d = int.tryParse(day);
+          if (d == null || d < 1 || d > DateTime(y, m + 1, 0).day) continue;
+          dates.add(DateTime(y, m, d));
+        }
+      }
+    }
+    dates.sort((a, b) => b.compareTo(a));
+    return dates;
+  }
+
   String _dayPath(DateTime d) => '/${d.year}/${_p(d.month)}/${_p(d.day)}';
   String _p(int n) => n.toString().padLeft(2, '0');
+
+  bool _isReadingTimeKey(String key) {
+    final parts = key.split(':');
+    if (parts.length != 2) return false;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    return hour != null &&
+        minute != null &&
+        hour >= 0 &&
+        hour <= 23 &&
+        minute >= 0 &&
+        minute <= 59;
+  }
 
   DateTime _timestampForKey(DateTime date, String key) {
     final tp = key.split(':');

@@ -37,6 +37,7 @@ class _StatusScreenState extends State<StatusScreen>
   final List<SensorSnapshot> _history = [];
   static const int _maxHistory = 24;
   static const Duration _onlineFreshness = Duration(minutes: 2);
+  static const Duration _connectionGrace = Duration(seconds: 45);
 
   // state
   bool _loading = true;
@@ -46,6 +47,8 @@ class _StatusScreenState extends State<StatusScreen>
   bool _fetching = false;
   bool _soundAlerts = true;
   String? _lastAlertSource;
+  DateTime? _lastSuccessfulFetchAt;
+  int _consecutiveFetchFailures = 0;
 
   // battery
   double _batteryPercent = 100.0;
@@ -211,15 +214,21 @@ class _StatusScreenState extends State<StatusScreen>
       if (!mounted) return;
 
       if (snap == null) {
+        _consecutiveFetchFailures++;
+        final keepShowingLastReading = _latest != null;
+        final keepOnlineDuringDelay =
+            keepShowingLastReading && _connectionStillRecoverable();
         setState(() {
           _loading = false;
-          _hasError = true;
-          _deviceOnline = false;
+          _hasError = !keepShowingLastReading;
+          _deviceOnline = keepOnlineDuringDelay;
         });
-        _stopAlarm();
+        if (!keepOnlineDuringDelay) _stopAlarm();
         return;
       }
 
+      _lastSuccessfulFetchAt = DateTime.now();
+      _consecutiveFetchFailures = 0;
       final online = _isFresh(snap);
       setState(() {
         _latest = snap;
@@ -262,6 +271,19 @@ class _StatusScreenState extends State<StatusScreen>
     final now = DateTime.now();
     final age = now.difference(snapshot.timestamp);
     return !age.isNegative && age <= _onlineFreshness;
+  }
+
+  bool _connectionStillRecoverable() {
+    final latest = _latest;
+    final lastSuccess = _lastSuccessfulFetchAt;
+    if (latest == null || lastSuccess == null) return false;
+    final now = DateTime.now();
+    final readingAge = now.difference(latest.timestamp);
+    final connectionAge = now.difference(lastSuccess);
+    return _consecutiveFetchFailures <= 3 &&
+        !readingAge.isNegative &&
+        readingAge <= _onlineFreshness + _connectionGrace &&
+        connectionAge <= _connectionGrace;
   }
 
   Future<void> _recordAlert(PlantModel plant, SensorSnapshot snapshot) async {
