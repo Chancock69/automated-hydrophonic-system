@@ -1,80 +1,55 @@
 part of '../screen_logs.dart';
 
-class _DD<T> extends StatelessWidget {
-  final String label;
-  final T? value;
-  final List<T> items;
-  final String Function(T) display;
-  final void Function(T?) onChanged;
+class _LogDatePickerPanel extends StatelessWidget {
+  final DateTime? selectedDate;
+  final VoidCallback onPick;
 
-  const _DD({
-    required this.label,
-    required this.value,
-    required this.items,
-    required this.display,
-    required this.onChanged,
-  });
+  const _LogDatePickerPanel({required this.selectedDate, required this.onPick});
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        label,
-        style: const TextStyle(
-          fontFamily: 'Nunito',
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: AHSColors.textSoft,
-        ),
-      ),
-      const SizedBox(height: 5),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11),
-        decoration: BoxDecoration(
-          color: AHSColors.bgCard,
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: AHSColors.border, width: 1.5),
-        ),
-        child: DropdownButton<T>(
-          value: items.contains(value) ? value : null,
-          isExpanded: true,
-          menuMaxHeight: 360,
-          borderRadius: BorderRadius.circular(14),
-          underline: const SizedBox(),
-          style: const TextStyle(
-            fontFamily: 'Nunito',
-            fontSize: 13,
-            color: AHSColors.textDark,
-          ),
-          icon: const Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: AHSColors.textSoft,
-          ),
-          hint: Text(
-            '–',
-            style: TextStyle(
-              fontFamily: 'Nunito',
-              color: AHSColors.textHint,
-              fontSize: 13,
+  Widget build(BuildContext context) {
+    final label = selectedDate == null
+        ? 'Select log date'
+        : DateFormat('MM-dd-yyyy').format(selectedDate!);
+    return AhsPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AHSColors.primaryGlow,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.calendar_month_rounded,
+              color: AHSColors.primary,
             ),
           ),
-          items: items
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item,
-                  child: Text(
-                    display(item),
-                    style: const TextStyle(fontFamily: 'Nunito', fontSize: 13),
-                  ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Sensor log date',
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
-              )
-              .toList(),
-          onChanged: items.isEmpty ? null : onChanged,
-        ),
+                const SizedBox(height: 2),
+                Text(label, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: onPick,
+            icon: const Icon(Icons.event_rounded, size: 18),
+            label: const Text('Pick date'),
+          ),
+        ],
       ),
-    ],
-  );
+    );
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -113,7 +88,9 @@ class _LogTable extends StatelessWidget {
 
   Color _tc(dynamic v, bool Function(double) crit) {
     if (v == null) return AHSColors.textHint;
-    return crit((v as num).toDouble()) ? AHSColors.critical : AHSColors.stable;
+    final value = v is num ? v.toDouble() : double.tryParse(v.toString());
+    if (value == null) return AHSColors.textHint;
+    return crit(value) ? AHSColors.critical : AHSColors.stable;
   }
 
   @override
@@ -164,7 +141,13 @@ class _LogTable extends StatelessWidget {
                 final ts = DateTime.tryParse(r['timestamp'] as String? ?? '');
                 final tmp = r['temperature'];
                 final hum = r['humidity'];
-                final ph = r['ph'];
+                final phRaw = r['ph'];
+                final phValue = phRaw is num
+                    ? phRaw.toDouble()
+                    : double.tryParse(phRaw?.toString() ?? '');
+                final ph = phValue == null
+                    ? null
+                    : SensorSnapshot.normalizePh(phValue);
                 final tds = r['tds'];
                 final wl = r['waterLevel'];
 
@@ -234,9 +217,9 @@ class _LogTrendChart extends StatelessWidget {
   Widget build(BuildContext context) {
     final chartRows = rows.length > 48 ? rows.sublist(rows.length - 48) : rows;
     return Container(
-      height: 178,
+      height: 238,
       margin: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       decoration: BoxDecoration(
         color: AHSColors.bgCard,
         borderRadius: BorderRadius.circular(18),
@@ -245,27 +228,31 @@ class _LogTrendChart extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
-              Expanded(
-                child: Text(
-                  'Daily Sensor Graph',
-                  style: TextStyle(
-                    fontFamily: 'Nunito',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: AHSColors.textDark,
-                  ),
+              Text(
+                'Daily Sensor Graph',
+                style: TextStyle(
+                  fontFamily: 'Nunito',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: AHSColors.textDark,
                 ),
               ),
-              _GraphLegend(color: AHSColors.neonCyan, label: 'Temp'),
-              SizedBox(width: 10),
-              _GraphLegend(color: AHSColors.neonGreen, label: 'Hum'),
-              SizedBox(width: 10),
-              _GraphLegend(color: AHSColors.warning, label: 'pH'),
+              SizedBox(height: 8),
+              Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: [
+                  _GraphLegend(color: AHSColors.neonCyan, label: 'Temp'),
+                  _GraphLegend(color: AHSColors.neonGreen, label: 'Hum'),
+                  _GraphLegend(color: AHSColors.warning, label: 'pH x10'),
+                ],
+              ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Expanded(
             child: RepaintBoundary(child: LineChart(_chartData(chartRows))),
           ),
@@ -295,7 +282,7 @@ class _LogTrendChart extends StatelessWidget {
         leftTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
-            reservedSize: 28,
+            reservedSize: 34,
             interval: 25,
             getTitlesWidget: (value, _) => Text(
               value.toInt().toString(),
@@ -307,8 +294,37 @@ class _LogTrendChart extends StatelessWidget {
             ),
           ),
         ),
-        bottomTitles: const AxisTitles(
-          sideTitles: SideTitles(showTitles: false),
+        bottomTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 24,
+            interval: data.length <= 1 ? 1 : (data.length - 1) / 2,
+            getTitlesWidget: (value, meta) {
+              final index = value.round();
+              if (index < 0 || index >= data.length) {
+                return const SizedBox.shrink();
+              }
+              if (index != 0 &&
+                  index != data.length ~/ 2 &&
+                  index != data.length - 1) {
+                return const SizedBox.shrink();
+              }
+              final ts = DateTime.tryParse(
+                data[index]['timestamp']?.toString() ?? '',
+              );
+              return Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  ts == null ? '' : DateFormat('HH:mm').format(ts),
+                  style: const TextStyle(
+                    fontFamily: 'Nunito',
+                    fontSize: 9,
+                    color: AHSColors.textSoft,
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ),
       lineBarsData: [
@@ -327,7 +343,8 @@ class _LogTrendChart extends StatelessWidget {
   }) {
     return LineChartBarData(
       spots: data.asMap().entries.map((entry) {
-        final value = _num(entry.value[key]) ?? 0;
+        final raw = _num(entry.value[key]) ?? 0;
+        final value = key == 'ph' ? SensorSnapshot.normalizePh(raw) : raw;
         return FlSpot(entry.key.toDouble(), value * scale);
       }).toList(),
       isCurved: false,

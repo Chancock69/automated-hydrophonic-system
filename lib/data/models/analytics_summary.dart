@@ -1,3 +1,4 @@
+import 'package:ahs/data/models/sensor_snapshot.dart';
 import 'package:ahs/data/models/sensor_thresholds.dart';
 
 class MetricStats {
@@ -86,7 +87,8 @@ class AnalyticsSummary {
 
       final temp = _double(row['temperature']);
       final humid = _double(row['humidity']);
-      final ph = _double(row['ph']);
+      final phRaw = _double(row['ph']);
+      final ph = phRaw == null ? null : SensorSnapshot.normalizePh(phRaw);
       final tds = _double(row['tds']);
       final water = _double(row['waterLevel']);
 

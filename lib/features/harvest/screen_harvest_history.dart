@@ -48,6 +48,41 @@ class _HarvestHistoryScreenState extends State<HarvestHistoryScreen> {
     );
   }
 
+  Future<void> _deleteHarvestEvent(HarvestEvent event) async {
+    final eventId = event.id;
+    if (eventId == null) return;
+
+    final confirmed = await showAhsConfirmDialog(
+      context: context,
+      title: 'Delete harvest record?',
+      message:
+          'This will remove the ${event.weightKg.toStringAsFixed(1)} kg harvest record for "${event.plantName}".',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
+    if (!confirmed) return;
+
+    await DatabaseHelper.instance.deleteHarvestEvent(eventId);
+    if (!mounted) return;
+    setState(() {
+      _future = DatabaseHelper.instance.getHarvestEvents();
+    });
+  }
+
+  Widget _swipeDeleteHarvest({
+    required HarvestEvent event,
+    required Widget child,
+  }) {
+    final eventId = event.id;
+    if (eventId == null) return child;
+
+    return _SwipeActionTile(
+      key: ValueKey('harvest-$eventId'),
+      onDelete: () => _deleteHarvestEvent(event),
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -120,27 +155,31 @@ class _HarvestHistoryScreenState extends State<HarvestHistoryScreen> {
                           final plant = widget.plants
                               .where((plant) => plant.id == event.plantId)
                               .firstOrNull;
-                          return _HarvestTile(
+                          return _swipeDeleteHarvest(
                             event: event,
-                            plant: plant,
-                            onDetails: () => _openDetails(event, plant),
-                            onAnalytics: plant == null
-                                ? null
-                                : () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          AnalyticsScreen(plant: plant),
+                            child: _HarvestTile(
+                              event: event,
+                              plant: plant,
+                              onDetails: () => _openDetails(event, plant),
+                              onAnalytics: plant == null
+                                  ? null
+                                  : () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            AnalyticsScreen(plant: plant),
+                                      ),
                                     ),
-                                  ),
-                            onLogs: plant == null
-                                ? null
-                                : () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => LogsScreen(plant: plant),
+                              onLogs: plant == null
+                                  ? null
+                                  : () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            LogsScreen(plant: plant),
+                                      ),
                                     ),
-                                  ),
+                            ),
                           );
                         },
                       ),
@@ -194,26 +233,30 @@ class _HarvestHistoryScreenState extends State<HarvestHistoryScreen> {
                       final plant = widget.plants
                           .where((item) => item.id == event.plantId)
                           .firstOrNull;
-                      return _HarvestTile(
+                      return _swipeDeleteHarvest(
                         event: event,
-                        plant: plant,
-                        onDetails: () => _openDetails(event, plant),
-                        onAnalytics: plant == null
-                            ? null
-                            : () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => AnalyticsScreen(plant: plant),
+                        child: _HarvestTile(
+                          event: event,
+                          plant: plant,
+                          onDetails: () => _openDetails(event, plant),
+                          onAnalytics: plant == null
+                              ? null
+                              : () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        AnalyticsScreen(plant: plant),
+                                  ),
                                 ),
-                              ),
-                        onLogs: plant == null
-                            ? null
-                            : () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => LogsScreen(plant: plant),
+                          onLogs: plant == null
+                              ? null
+                              : () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => LogsScreen(plant: plant),
+                                  ),
                                 ),
-                              ),
+                        ),
                       );
                     },
                   ),
@@ -227,7 +270,7 @@ class _HarvestHistoryScreenState extends State<HarvestHistoryScreen> {
     final query = _query.trim().toLowerCase();
     if (query.isEmpty) return events;
     return events.where((event) {
-      final date = DateFormat('MMM d, y').format(event.harvestedAt);
+      final date = DateFormat('MM-dd-yyyy').format(event.harvestedAt);
       final status = event.markedDone ? 'done completed ended' : 'continuing';
       final text = '${event.plantName} $date $status ${event.plantId}'
           .toLowerCase();
@@ -262,66 +305,65 @@ class _HarvestSearchPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AhsPanel(
-      padding: const EdgeInsets.all(14),
-      child: Column(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
         children: [
-          TextField(
-            controller: controller,
-            onChanged: onChanged,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'Search harvest history',
-              prefixIcon: const Icon(Icons.search_rounded),
-              suffixIcon: query.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear search',
-                      onPressed: onClear,
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: AHSColors.stable.withAlpha(18),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AHSColors.stable.withAlpha(45)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: AHSColors.stable.withAlpha(24),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.done_all_rounded,
-                    color: AHSColors.stable,
-                    size: 20,
+          Expanded(
+            child: SizedBox(
+              height: 46,
+              child: TextField(
+                controller: controller,
+                onChanged: onChanged,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: 'Search history',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  suffixIcon: query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Clear search',
+                          onPressed: onClear,
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                        ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Plants done',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: AHSColors.textDark,
-                    ),
-                  ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: AHSColors.stable.withAlpha(18),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AHSColors.stable.withAlpha(45)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.done_all_rounded,
+                  color: AHSColors.stable,
+                  size: 18,
                 ),
                 Text(
                   '$doneCount',
                   style: const TextStyle(
                     fontFamily: 'Nunito',
-                    fontSize: 22,
+                    fontSize: 16,
                     fontWeight: FontWeight.w900,
                     color: AHSColors.stable,
+                  ),
+                ),
+                const Text(
+                  'done',
+                  style: TextStyle(
+                    fontFamily: 'Nunito',
+                    fontSize: 9,
+                    color: AHSColors.textSoft,
                   ),
                 ),
               ],
@@ -388,7 +430,7 @@ class _HarvestTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${DateFormat('MMM d, y').format(event.harvestedAt)} - ${event.survivedCount}/${event.totalCount} survived - ${event.lifeRate.toStringAsFixed(0)}%',
+                  '${DateFormat('MM-dd-yyyy').format(event.harvestedAt)} - ${event.survivedCount}/${event.totalCount} survived - ${event.lifeRate.toStringAsFixed(0)}%',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -429,6 +471,109 @@ class _HarvestTile extends StatelessWidget {
               onTap: onLogs,
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SwipeActionTile extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onDelete;
+
+  const _SwipeActionTile({
+    super.key,
+    required this.child,
+    required this.onDelete,
+  });
+
+  @override
+  State<_SwipeActionTile> createState() => _SwipeActionTileState();
+}
+
+class _SwipeActionTileState extends State<_SwipeActionTile> {
+  static const double _actionWidth = 96;
+  double _offset = 0;
+
+  void _settle() {
+    setState(() {
+      _offset = _offset.abs() > _actionWidth * 0.35 ? -_actionWidth : 0;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: SizedBox(
+                width: _actionWidth,
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(color: AHSColors.critical),
+                  child: const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.delete_outline_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Delete',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragUpdate: (details) {
+              setState(() {
+                _offset = (_offset + details.delta.dx).clamp(-_actionWidth, 0);
+              });
+            },
+            onHorizontalDragEnd: (_) => _settle(),
+            onTap: () {
+              if (_offset != 0) setState(() => _offset = 0);
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              transform: Matrix4.translationValues(_offset, 0, 0),
+              child: widget.child,
+            ),
+          ),
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: IgnorePointer(
+                ignoring: _offset == 0,
+                child: AnimatedOpacity(
+                  opacity: _offset == 0 ? 0 : 1,
+                  duration: const Duration(milliseconds: 120),
+                  child: SizedBox(
+                    width: _actionWidth,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(onTap: widget.onDelete),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -555,17 +700,17 @@ class _HarvestDetailsSheet extends StatelessWidget {
               label: 'Planted',
               value: p == null
                   ? '--'
-                  : DateFormat('MMM d, y').format(p.addedDate),
+                  : DateFormat('MM-dd-yyyy').format(p.addedDate),
             ),
             _DetailRow(
               label: 'Planned End',
               value: planned == null
                   ? '--'
-                  : DateFormat('MMM d, y').format(planned),
+                  : DateFormat('MM-dd-yyyy').format(planned),
             ),
             _DetailRow(
               label: 'Harvested',
-              value: DateFormat('MMM d, y').format(actual),
+              value: DateFormat('MM-dd-yyyy').format(actual),
             ),
             _DetailRow(
               label: 'Harvest Type',

@@ -27,7 +27,7 @@ class DatabaseHelper {
     final path = p.join(dir, 'ahs.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, _) async {
         // ── plants ──
         await db.execute('''
@@ -44,7 +44,11 @@ class DatabaseHelper {
             totalHarvestWeight REAL NOT NULL DEFAULT 0,
             harvestCount INTEGER NOT NULL DEFAULT 0,
             isActive    INTEGER NOT NULL DEFAULT 0,
-            isHarvested INTEGER NOT NULL DEFAULT 0
+            isHarvested INTEGER NOT NULL DEFAULT 0,
+            presetKey   TEXT    NOT NULL DEFAULT 'custom',
+            chamberId   INTEGER NOT NULL DEFAULT 1,
+            lastNutrientAt TEXT,
+            lastWaterChangeAt TEXT
           )
         ''');
 
@@ -65,6 +69,7 @@ class DatabaseHelper {
         await _createPlantSlotsTable(db);
         await _createHarvestEventsTable(db);
         await _createNotificationsTable(db);
+        await _createChambersTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -103,6 +108,9 @@ class DatabaseHelper {
           await _createPlantSlotsTable(db);
           await _createHarvestEventsTable(db);
         }
+        if (oldVersion < 4) {
+          await _ensurePlantFeatureColumns(db);
+        }
       },
       onOpen: (db) async {
         await _createBatteryStateTable(db);
@@ -118,6 +126,8 @@ class DatabaseHelper {
   }
 
   Future<void> _ensureSchema(Database db) async {
+    await _ensurePlantFeatureColumns(db);
+    await _createChambersTable(db);
     await _addColumnIfMissing(
       db,
       table: 'plants',
@@ -168,6 +178,33 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> _ensurePlantFeatureColumns(Database db) async {
+    await _addColumnIfMissing(
+      db,
+      table: 'plants',
+      column: 'presetKey',
+      definition: "TEXT NOT NULL DEFAULT 'custom'",
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'plants',
+      column: 'chamberId',
+      definition: 'INTEGER NOT NULL DEFAULT 1',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'plants',
+      column: 'lastNutrientAt',
+      definition: 'TEXT',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'plants',
+      column: 'lastWaterChangeAt',
+      definition: 'TEXT',
+    );
+  }
+
   Future<void> _addColumnIfMissing(
     Database db, {
     required String table,
@@ -185,9 +222,23 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS battery_state (
         id             INTEGER PRIMARY KEY CHECK (id = 1),
-        lastFullCharge TEXT    NOT NULL
+        lastFullCharge TEXT    NOT NULL,
+        batteryPercent REAL    NOT NULL DEFAULT 100,
+        lastUpdatedAt  TEXT
       )
     ''');
+    await _addColumnIfMissing(
+      db,
+      table: 'battery_state',
+      column: 'batteryPercent',
+      definition: 'REAL NOT NULL DEFAULT 100',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'battery_state',
+      column: 'lastUpdatedAt',
+      definition: 'TEXT',
+    );
     await _ensureBatteryRow(db);
   }
 
@@ -198,6 +249,32 @@ class DatabaseHelper {
         settingValue TEXT NOT NULL
       )
     ''');
+  }
+
+  Future<void> _createChambersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS chambers (
+        id          INTEGER PRIMARY KEY,
+        name        TEXT    NOT NULL,
+        firebasePath TEXT   NOT NULL DEFAULT '',
+        deviceLabel TEXT    NOT NULL DEFAULT 'ESP32',
+        isEnabled   INTEGER NOT NULL DEFAULT 1
+      )
+    ''');
+    await db.insert('chambers', {
+      'id': 1,
+      'name': 'Chamber 01',
+      'firebasePath': '',
+      'deviceLabel': 'ESP32',
+      'isEnabled': 1,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    await db.insert('chambers', {
+      'id': 2,
+      'name': 'Chamber 02',
+      'firebasePath': '',
+      'deviceLabel': 'ESP32',
+      'isEnabled': 1,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<void> _createPlantSlotsTable(Database db) async {
@@ -292,6 +369,8 @@ class DatabaseHelper {
     await db.insert('battery_state', {
       'id': 1,
       'lastFullCharge': DateTime.now().toIso8601String(),
+      'batteryPercent': 100.0,
+      'lastUpdatedAt': DateTime.now().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
@@ -315,6 +394,16 @@ class DatabaseHelper {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  Future<void> saveFirebaseSync({
+    required DateTime syncedAt,
+    required String path,
+    required bool online,
+  }) async {
+    await setAppSetting('firebaseLastSyncedAt', syncedAt.toIso8601String());
+    await setAppSetting('firebaseLatestPath', path);
+    await setAppSetting('firebaseLastStatus', online ? 'online' : 'offline');
+  }
+
   Future<Map<String, int>> getStorageStats() async {
     final db = await _database;
     Future<int> count(String table) async {
@@ -328,6 +417,23 @@ class DatabaseHelper {
       'harvests': await count('harvest_events'),
       'notifications': await count('app_notifications'),
     };
+  }
+
+  Future<void> clearLocalData() async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      await txn.delete('sensor_logs');
+      await txn.delete('harvest_events');
+      await txn.delete('plant_slots');
+      await txn.delete('plants');
+      await txn.delete('app_notifications');
+      await txn.insert('battery_state', {
+        'id': 1,
+        'lastFullCharge': DateTime.now().toIso8601String(),
+        'batteryPercent': 100.0,
+        'lastUpdatedAt': DateTime.now().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Future<int?> insertNotification(AppNotification notification) async {
@@ -374,6 +480,11 @@ class DatabaseHelper {
     await db.update('app_notifications', {'isRead': 1});
   }
 
+  Future<void> clearNotifications() async {
+    final db = await _database;
+    await db.delete('app_notifications');
+  }
+
   // ══════════════════════════════════════════
   //  PLANTS
   // ══════════════════════════════════════════
@@ -394,6 +505,28 @@ class DatabaseHelper {
   Future<PlantModel?> getActivePlant() async {
     final db = await _database;
     final rows = await db.query('plants', where: 'isActive = 1', limit: 1);
+    return rows.isEmpty ? null : PlantModel.fromMap(rows.first);
+  }
+
+  Future<PlantModel?> getPlantById(int plantId) async {
+    final db = await _database;
+    final rows = await db.query(
+      'plants',
+      where: 'id = ?',
+      whereArgs: [plantId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : PlantModel.fromMap(rows.first);
+  }
+
+  Future<PlantModel?> getActivePlantForChamber(int chamberId) async {
+    final db = await _database;
+    final rows = await db.query(
+      'plants',
+      where: 'isActive = 1 AND chamberId = ?',
+      whereArgs: [chamberId],
+      limit: 1,
+    );
     return rows.isEmpty ? null : PlantModel.fromMap(rows.first);
   }
 
@@ -456,6 +589,26 @@ class DatabaseHelper {
         'isActive': 0,
         'actualHarvestDate': DateTime.now().toIso8601String(),
       },
+      where: 'id = ?',
+      whereArgs: [plantId],
+    );
+  }
+
+  Future<void> markNutrientAdded(int plantId) async {
+    final db = await _database;
+    await db.update(
+      'plants',
+      {'lastNutrientAt': DateTime.now().toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [plantId],
+    );
+  }
+
+  Future<void> markWaterChanged(int plantId) async {
+    final db = await _database;
+    await db.update(
+      'plants',
+      {'lastWaterChangeAt': DateTime.now().toIso8601String()},
       where: 'id = ?',
       whereArgs: [plantId],
     );
@@ -579,6 +732,49 @@ class DatabaseHelper {
       orderBy: 'harvestedAt DESC',
     );
     return rows.map(HarvestEvent.fromMap).toList();
+  }
+
+  Future<void> deleteHarvestEvent(int eventId) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'harvest_events',
+        where: 'id = ?',
+        whereArgs: [eventId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      final plantId = rows.first['plantId'] as int;
+      await txn.delete('harvest_events', where: 'id = ?', whereArgs: [eventId]);
+
+      final remaining = await txn.query(
+        'harvest_events',
+        where: 'plantId = ?',
+        whereArgs: [plantId],
+        orderBy: 'harvestedAt DESC',
+      );
+      final totalWeight = remaining.fold<double>(
+        0,
+        (total, row) => total + ((row['weightKg'] as num?) ?? 0).toDouble(),
+      );
+      final doneRows = remaining
+          .where((row) => ((row['markedDone'] as int?) ?? 0) == 1)
+          .toList();
+
+      await txn.update(
+        'plants',
+        {
+          'totalHarvestWeight': totalWeight,
+          'harvestCount': remaining.length,
+          'isHarvested': doneRows.isNotEmpty ? 1 : 0,
+          'actualHarvestDate': doneRows.isEmpty
+              ? null
+              : doneRows.first['harvestedAt']?.toString(),
+        },
+        where: 'id = ?',
+        whereArgs: [plantId],
+      );
+    });
   }
 
   Future<HarvestEvent> recordHarvest({
@@ -714,6 +910,18 @@ class DatabaseHelper {
     return rows.reversed.toList();
   }
 
+  Future<Map<String, dynamic>?> getLatestLogForPlant(int plantId) async {
+    final db = await _database;
+    final rows = await db.query(
+      'sensor_logs',
+      where: 'plantId = ?',
+      whereArgs: [plantId],
+      orderBy: 'timestamp DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
   Future<int> seedSampleLogsForPlant(PlantModel plant, {int count = 72}) async {
     final plantId = plant.id;
     if (plantId == null) return 0;
@@ -757,17 +965,16 @@ class DatabaseHelper {
   //  BATTERY STATE
   // ══════════════════════════════════════════
 
-  /// Returns elapsed hours since last full charge. Max life = 3 hours.
+  /// Returns the stored battery estimate. Hardware-reported battery can update
+  /// this later; until then it stays stable instead of fake-draining.
   Future<double> getBatteryPercent() async {
     final db = await _database;
     await _ensureBatteryRow(db);
     final rows = await db.query('battery_state', where: 'id = 1', limit: 1);
     if (rows.isEmpty) return 100.0;
-    final lastCharge = DateTime.parse(rows.first['lastFullCharge'] as String);
-    final elapsed = DateTime.now().difference(lastCharge);
-    const batteryLifeHours = 3.0;
-    final percent = 1.0 - (elapsed.inSeconds / (batteryLifeHours * 3600));
-    return (percent * 100).clamp(0.0, 100.0);
+    final value = rows.first['batteryPercent'];
+    if (value is num) return value.toDouble().clamp(0.0, 100.0);
+    return double.tryParse(value?.toString() ?? '')?.clamp(0.0, 100.0) ?? 100.0;
   }
 
   Future<DateTime> getLastFullCharge() async {
@@ -784,6 +991,8 @@ class DatabaseHelper {
     await db.insert('battery_state', {
       'id': 1,
       'lastFullCharge': DateTime.now().toIso8601String(),
+      'batteryPercent': 100.0,
+      'lastUpdatedAt': DateTime.now().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 }

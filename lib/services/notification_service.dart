@@ -67,4 +67,34 @@ class NotificationService {
       notificationDetails: details,
     );
   }
+
+  Future<void> showReminder({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    await initialize();
+
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'plant_reminders',
+        'Plant reminders',
+        channelDescription: 'Harvest, nutrient, water, and battery reminders',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+
+    await _plugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: details,
+    );
+  }
 }

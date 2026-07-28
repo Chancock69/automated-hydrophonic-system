@@ -52,6 +52,19 @@ class NotificationsScreenState extends State<NotificationsScreen> {
     await reload();
   }
 
+  Future<void> _clearAll() async {
+    final confirmed = await showAhsConfirmDialog(
+      context: context,
+      title: 'Clear all alerts?',
+      message: 'This will permanently remove all saved notifications.',
+      confirmLabel: 'Clear',
+      destructive: true,
+    );
+    if (!confirmed) return;
+    await DatabaseHelper.instance.clearNotifications();
+    await reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -75,50 +88,39 @@ class NotificationsScreenState extends State<NotificationsScreen> {
               horizontal: compact ? 12 : 16,
               vertical: 12,
             ),
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            child: Row(
               children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: AHSColors.primaryGlow,
-                        borderRadius: BorderRadius.circular(8),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AHSColors.primaryGlow,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.notifications_active_outlined,
+                    color: AHSColors.primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$_unreadCount unread',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      child: const Icon(
-                        Icons.notifications_active_outlined,
-                        color: AHSColors.primary,
+                      Text(
+                        '${_notifications.length} saved alerts',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: compact ? width - 156 : 180,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$_unreadCount unread',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          Text(
-                            '${_notifications.length} saved alerts',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 IconButton(
                   tooltip: 'Refresh notifications',
@@ -126,9 +128,16 @@ class NotificationsScreenState extends State<NotificationsScreen> {
                   icon: const Icon(Icons.refresh_rounded),
                 ),
                 if (_unreadCount > 0)
-                  TextButton(
+                  IconButton(
+                    tooltip: 'Mark all as read',
                     onPressed: _markAllRead,
-                    child: const Text('Read all'),
+                    icon: const Icon(Icons.done_all_rounded),
+                  ),
+                if (_notifications.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Clear alerts',
+                    onPressed: _clearAll,
+                    icon: const Icon(Icons.delete_sweep_outlined),
                   ),
               ],
             ),
@@ -236,7 +245,7 @@ class _NotificationCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       DateFormat(
-                        'MMM d, yyyy  h:mm a',
+                        'MM-dd-yyyy  h:mm a',
                       ).format(notification.createdAt),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),

@@ -21,6 +21,9 @@ class SettingsScreenState extends State<SettingsScreen> {
   Map<String, int> _stats = const {'plants': 0, 'sensorLogs': 0, 'harvests': 0};
   bool _loading = true;
   bool _testingConnection = false;
+  String? _firebaseStatus;
+  String? _firebaseLastSyncedAt;
+  String? _firebaseLatestPath;
 
   @override
   void initState() {
@@ -36,12 +39,24 @@ class SettingsScreenState extends State<SettingsScreen> {
       );
       final stats = await DatabaseHelper.instance.getStorageStats();
       final battery = await DatabaseHelper.instance.getBatteryPercent();
+      final firebaseStatus = await DatabaseHelper.instance.getAppSetting(
+        'firebaseLastStatus',
+      );
+      final firebaseLastSyncedAt = await DatabaseHelper.instance.getAppSetting(
+        'firebaseLastSyncedAt',
+      );
+      final firebaseLatestPath = await DatabaseHelper.instance.getAppSetting(
+        'firebaseLatestPath',
+      );
       if (!mounted) return;
       setState(() {
         _soundAlerts = sound != 'false';
         _systemNotifications = notifications != 'false';
         _stats = stats;
         _batteryPercent = battery;
+        _firebaseStatus = firebaseStatus;
+        _firebaseLastSyncedAt = firebaseLastSyncedAt;
+        _firebaseLatestPath = firebaseLatestPath;
         _loading = false;
       });
     } catch (_) {
@@ -84,6 +99,14 @@ class SettingsScreenState extends State<SettingsScreen> {
             ? 'Firebase is working and ESP32 data is live.'
             : 'Firebase is working, but ESP32 appears offline.',
       );
+      await DatabaseHelper.instance.saveFirebaseSync(
+        syncedAt: DateTime.now(),
+        path: snapshot == null
+            ? '/'
+            : '/${snapshot.timestamp.year}/${snapshot.timestamp.month.toString().padLeft(2, '0')}/${snapshot.timestamp.day.toString().padLeft(2, '0')}',
+        online: online,
+      );
+      await reload();
     } catch (_) {
       if (mounted) {
         _showMessage(
@@ -100,6 +123,21 @@ class SettingsScreenState extends State<SettingsScreen> {
     await DatabaseHelper.instance.resetBattery();
     await reload();
     _showMessage('Device battery marked as fully charged.');
+  }
+
+  Future<void> _clearLocalData() async {
+    final confirmed = await showAhsConfirmDialog(
+      context: context,
+      title: 'Delete all local data?',
+      message:
+          'This will remove plants, sensor logs, harvest history, and saved alerts from SQLite on this device.',
+      confirmLabel: 'Delete data',
+      destructive: true,
+    );
+    if (!confirmed) return;
+    await DatabaseHelper.instance.clearLocalData();
+    await reload();
+    _showMessage('Local SQLite data cleared.');
   }
 
   void _showMessage(String message, {bool error = false}) {
@@ -122,6 +160,14 @@ class SettingsScreenState extends State<SettingsScreen> {
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
       physics: const BouncingScrollPhysics(),
       children: [
+        _FirebaseControlPanel(
+          status: _firebaseStatus,
+          lastSyncedAt: _firebaseLastSyncedAt,
+          latestPath: _firebaseLatestPath,
+          testing: _testingConnection,
+          onTest: _testingConnection ? null : _testFirebase,
+        ),
+        const SizedBox(height: 12),
         AhsPanel(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           child: Column(
@@ -156,28 +202,13 @@ class SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        // Compact action cards — 2 rows × 2
-        _SettingsCompactCard(
-          icon: Icons.cloud_outlined,
-          title: 'Firebase',
-          subtitle: _testingConnection ? 'Checking…' : 'Test source',
-          onTap: _testingConnection ? null : _testFirebase,
-          trailing: _testingConnection
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : null,
-        ),
-        const SizedBox(height: 8),
         _SettingsCompactCard(
           icon: Icons.storage_outlined,
           title: 'Local data',
           subtitle:
               '${_stats['plants'] ?? 0} plants · '
               '${_stats['sensorLogs'] ?? 0} readings',
-          onTap: reload,
+          onTap: _clearLocalData,
         ),
         const SizedBox(height: 8),
         _SettingsCompactCard(
@@ -196,7 +227,7 @@ class SettingsScreenState extends State<SettingsScreen> {
         const _SettingsCompactCard(
           icon: Icons.info_outline_rounded,
           title: 'About',
-          subtitle: 'Version 1.0.0 · Chamber 01',
+          subtitle: 'Version 3 · Chamber 01',
         ),
       ],
     );
@@ -222,6 +253,104 @@ class _FixedInterval extends StatelessWidget {
           fontWeight: FontWeight.w900,
           color: AHSColors.primary,
         ),
+      ),
+    );
+  }
+}
+
+class _FirebaseControlPanel extends StatelessWidget {
+  final String? status;
+  final String? lastSyncedAt;
+  final String? latestPath;
+  final bool testing;
+  final VoidCallback? onTest;
+
+  const _FirebaseControlPanel({
+    required this.status,
+    required this.lastSyncedAt,
+    required this.latestPath,
+    required this.testing,
+    required this.onTest,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final online = status == 'online';
+    final color = online ? AHSColors.stable : AHSColors.warning;
+    final synced = DateTime.tryParse(lastSyncedAt ?? '');
+    return AhsPanel(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.cloud_sync_rounded, color: color),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Firebase Control Panel',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: onTest,
+                icon: testing
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync_rounded, size: 16),
+                label: const Text('Test'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _FirebaseInfoRow(
+            label: 'Status',
+            value: online ? 'Connected' : status ?? 'Not checked',
+          ),
+          _FirebaseInfoRow(
+            label: 'Last synced',
+            value: synced == null
+                ? 'No sync yet'
+                : '${synced.month.toString().padLeft(2, '0')}-${synced.day.toString().padLeft(2, '0')}-${synced.year} ${synced.hour.toString().padLeft(2, '0')}:${synced.minute.toString().padLeft(2, '0')}',
+          ),
+          _FirebaseInfoRow(label: 'Latest path', value: latestPath ?? '/'),
+        ],
+      ),
+    );
+  }
+}
+
+class _FirebaseInfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _FirebaseInfoRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 92,
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -286,7 +415,6 @@ class _SettingsCompactCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback? onTap;
-  final Widget? trailing;
 
   const _SettingsCompactCard({
     required this.icon,
@@ -294,7 +422,6 @@ class _SettingsCompactCard extends StatelessWidget {
     required this.subtitle,
     this.iconColor = AHSColors.primary,
     this.onTap,
-    this.trailing,
   });
 
   @override
@@ -338,10 +465,7 @@ class _SettingsCompactCard extends StatelessWidget {
               ],
             ),
           ),
-          if (trailing != null) ...[
-            const SizedBox(width: 10),
-            trailing!,
-          ] else if (onTap != null) ...[
+          if (onTap != null) ...[
             const SizedBox(width: 10),
             Icon(
               Icons.chevron_right_rounded,

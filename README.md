@@ -99,7 +99,9 @@ water_level
 ```
 
 Firebase access is implemented in `lib/data/remote/firebase_http.dart`.
-Firebase host/auth settings are read from `lib/data/remote/firebase_config.dart` through `--dart-define`.
+Firebase host/auth settings are read from `lib/data/remote/firebase_config.dart`.
+The app includes the current Realtime Database host and database secret by
+default, and those values can still be overridden through `--dart-define`.
 
 ## SQLite Tables
 
@@ -165,11 +167,12 @@ flutter pub get
 flutter run
 ```
 
-For Firebase-authenticated testing, pass the database host and token:
+For Firebase-authenticated testing with a different database or token, pass the
+host and token:
 
 ```powershell
 flutter run -d emulator-5554 `
-  --dart-define=AHS_FIREBASE_HOST=ahsadmin-default-rtdb.firebaseio.com `
+  --dart-define=AHS_FIREBASE_HOST=your-project-default-rtdb.firebaseio.com `
   --dart-define=AHS_FIREBASE_AUTH=YOUR_FIREBASE_DATABASE_TOKEN
 ```
 
@@ -184,4 +187,5 @@ flutter pub get
 - `build/` and `.dart_tool/` are generated and should not be edited manually.
 - `android/` is needed for Android emulator/app builds.
 - `ios/`, `web/`, `windows/`, `linux/`, and `macos/` are Flutter platform folders. Keep them unless the project is officially Android-only.
-- Firebase auth should be supplied through `--dart-define` or a secure build pipeline before production use.
+- Before publishing the repository publicly, move the Firebase token into
+  `--dart-define` or a secure build pipeline.

@@ -1,4 +1,20 @@
 import 'package:ahs/data/models/sensor_snapshot.dart';
+import 'package:ahs/data/models/plant_model.dart';
+import 'package:ahs/data/models/plant_preset.dart';
+
+class PlantSensorRanges {
+  final SensorRange temperature;
+  final SensorRange humidity;
+  final SensorRange ph;
+  final SensorRange tds;
+
+  const PlantSensorRanges({
+    required this.temperature,
+    required this.humidity,
+    required this.ph,
+    required this.tds,
+  });
+}
 
 class SensorThresholds {
   static const double tempMin = 18.0;
@@ -22,6 +38,16 @@ class SensorThresholds {
   static bool isPhCritical(double v) => v < phMin || v > phMax;
   static bool isTdsCritical(double v) => v < tdsMin || v > tdsMax;
   static bool isWaterCritical(double v) => v > waterLevelCritical;
+
+  static PlantSensorRanges forPlant(PlantModel plant) {
+    final preset = PlantPreset.byKey(plant.presetKey);
+    return PlantSensorRanges(
+      temperature: preset.temperature,
+      humidity: preset.humidity,
+      ph: preset.ph,
+      tds: preset.tds,
+    );
+  }
 
   static bool anyAnomalyIn(SensorSnapshot s) =>
       isTempCritical(s.temperature) ||

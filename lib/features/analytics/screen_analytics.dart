@@ -1,14 +1,19 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:ahs/app/app_theme.dart';
 import 'package:ahs/data/local/database_helper.dart';
 import 'package:ahs/data/models/analytics_summary.dart';
 import 'package:ahs/data/models/harvest_event.dart';
 import 'package:ahs/data/models/plant_model.dart';
+import 'package:ahs/data/models/sensor_snapshot.dart';
 import 'package:ahs/shared/widgets/app_ui.dart';
 
 class AnalyticsScreen extends StatefulWidget {
@@ -128,6 +133,118 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     });
   }
 
+  Future<void> _exportPdf() async {
+    final data = await _future;
+    final bytes = await _buildAnalyticsPdf(data);
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _AnalyticsPdfPreview(
+          bytes: bytes,
+          fileName: '${widget.plant.name}-analytics.pdf',
+          plantName: widget.plant.name,
+        ),
+      ),
+    );
+  }
+
+  Future<Uint8List> _buildAnalyticsPdf(_AnalyticsData data) async {
+    final doc = pw.Document();
+    final summary = data.summary;
+    String metricLine(String label, MetricStats? stats, String unit) {
+      if (stats == null) return '$label: no readings';
+      return '$label: latest ${stats.latest.toStringAsFixed(1)}$unit | avg ${stats.average.toStringAsFixed(1)}$unit | min ${stats.min.toStringAsFixed(1)}$unit | max ${stats.max.toStringAsFixed(1)}$unit';
+    }
+
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(28),
+        build: (_) => [
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.all(18),
+            decoration: pw.BoxDecoration(
+              color: PdfColors.green900,
+              borderRadius: pw.BorderRadius.circular(8),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'Plant Analytics Report',
+                  style: pw.TextStyle(
+                    fontSize: 24,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.white,
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Text(
+                  widget.plant.name,
+                  style: const pw.TextStyle(
+                    fontSize: 12,
+                    color: PdfColors.green100,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 18),
+          pw.Text(
+            'Generated ${DateFormat('MM-dd-yyyy h:mm a').format(DateTime.now())}',
+          ),
+          pw.SizedBox(height: 14),
+          pw.Text(
+            'Timeline',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+          pw.Text(
+            'Planted: ${DateFormat('MM-dd-yyyy').format(widget.plant.addedDate)}',
+          ),
+          pw.Text(
+            'Monitoring days: ${DateTime.now().difference(widget.plant.addedDate).inDays.clamp(0, 9999)}',
+          ),
+          pw.Text(
+            'Planned harvest: ${widget.plant.harvestDate == null ? 'Not set' : DateFormat('MM-dd-yyyy').format(widget.plant.harvestDate!)}',
+          ),
+          pw.Text(
+            'Actual harvest: ${widget.plant.actualHarvestDate == null ? 'Not harvested' : DateFormat('MM-dd-yyyy').format(widget.plant.actualHarvestDate!)}',
+          ),
+          pw.SizedBox(height: 18),
+          pw.Text(
+            'Sensor Summary',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+          pw.Text('Records: ${summary.totalRecords}'),
+          pw.Text(
+            'Anomalies: ${summary.anomalyCount} (${summary.anomalyRate.toStringAsFixed(0)}%)',
+          ),
+          pw.Text(metricLine('Temperature', summary.temperature, ' C')),
+          pw.Text(metricLine('Humidity', summary.humidity, '%')),
+          pw.Text(metricLine('pH', summary.ph, '')),
+          pw.Text(metricLine('TDS', summary.tds, ' ppm')),
+          pw.Text(metricLine('Water level', summary.waterLevel, ' cm')),
+          pw.SizedBox(height: 18),
+          pw.Text(
+            'Harvest History',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+          if (data.harvestEvents.isEmpty)
+            pw.Text('No harvest records yet')
+          else
+            ...data.harvestEvents.map(
+              (event) => pw.Text(
+                '${DateFormat('MM-dd-yyyy').format(event.harvestedAt)} - ${event.weightKg.toStringAsFixed(1)} kg - ${event.lifeRate.toStringAsFixed(0)}% survival',
+              ),
+            ),
+        ],
+      ),
+    );
+
+    return doc.save();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -149,6 +266,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     child: _AnalyticsHeader(
                       plant: widget.plant,
                       onBack: () => Navigator.pop(context),
+                      onExport: data == null ? null : _exportPdf,
                     ),
                   ),
                   if (loading)
@@ -233,81 +351,57 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           ),
                         ),
                       ),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                        child: _PlantDateMapCard(
-                          plant: widget.plant,
-                          events: data.harvestEvents,
-                          selectedDate: _selectedDate,
-                          onDateSelected: (date) {
-                            setState(() {
-                              _selectedDate = date;
-                              _future = _load();
-                            });
-                          },
-                        ),
-                      ),
-                    ),
                     if (data.summary.hasData)
-                      SliverLayoutBuilder(
-                        builder: (context, constraints) {
-                          final compact = constraints.crossAxisExtent < 390;
-                          return SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                            sliver: SliverGrid(
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: compact ? 1 : 2,
-                                    mainAxisSpacing: 12,
-                                    crossAxisSpacing: 12,
-                                    childAspectRatio: compact ? 2.65 : 1.18,
-                                  ),
-                              delegate: SliverChildListDelegate.fixed([
-                                _MetricCard(
-                                  label: 'Temperature',
-                                  unit: 'C',
-                                  icon: Icons.thermostat_rounded,
-                                  color: AHSColors.neonCyan,
-                                  stats: data.summary.temperature,
-                                  decimals: 1,
-                                ),
-                                _MetricCard(
-                                  label: 'Humidity',
-                                  unit: '%',
-                                  icon: Icons.water_drop_rounded,
-                                  color: AHSColors.neonGreen,
-                                  stats: data.summary.humidity,
-                                  decimals: 0,
-                                ),
-                                _MetricCard(
-                                  label: 'pH Level',
-                                  unit: '',
-                                  icon: Icons.science_rounded,
-                                  color: AHSColors.warning,
-                                  stats: data.summary.ph,
-                                  decimals: 2,
-                                ),
-                                _MetricCard(
-                                  label: 'TDS',
-                                  unit: 'ppm',
-                                  icon: Icons.bubble_chart_rounded,
-                                  color: AHSColors.primaryMid,
-                                  stats: data.summary.tds,
-                                  decimals: 0,
-                                ),
-                                _MetricCard(
-                                  label: 'Water Level',
-                                  unit: 'cm',
-                                  icon: Icons.waves_rounded,
-                                  color: AHSColors.neonLime,
-                                  stats: data.summary.waterLevel,
-                                  decimals: 1,
-                                ),
-                              ]),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                        sliver: SliverList.list(
+                          children: [
+                            _MetricCard(
+                              label: 'Temperature',
+                              unit: 'C',
+                              icon: Icons.thermostat_rounded,
+                              color: AHSColors.neonCyan,
+                              stats: data.summary.temperature,
+                              decimals: 1,
                             ),
-                          );
-                        },
+                            const SizedBox(height: 10),
+                            _MetricCard(
+                              label: 'Humidity',
+                              unit: '%',
+                              icon: Icons.water_drop_rounded,
+                              color: AHSColors.neonGreen,
+                              stats: data.summary.humidity,
+                              decimals: 0,
+                            ),
+                            const SizedBox(height: 10),
+                            _MetricCard(
+                              label: 'pH Level',
+                              unit: '',
+                              icon: Icons.science_rounded,
+                              color: AHSColors.warning,
+                              stats: data.summary.ph,
+                              decimals: 2,
+                            ),
+                            const SizedBox(height: 10),
+                            _MetricCard(
+                              label: 'TDS',
+                              unit: 'ppm',
+                              icon: Icons.bubble_chart_rounded,
+                              color: AHSColors.primaryMid,
+                              stats: data.summary.tds,
+                              decimals: 0,
+                            ),
+                            const SizedBox(height: 10),
+                            _MetricCard(
+                              label: 'Water Level',
+                              unit: 'cm',
+                              icon: Icons.waves_rounded,
+                              color: AHSColors.neonLime,
+                              stats: data.summary.waterLevel,
+                              decimals: 1,
+                            ),
+                          ],
+                        ),
                       ),
                   ],
                 ],
@@ -453,8 +547,13 @@ enum _AnalyticsMetric {
 class _AnalyticsHeader extends StatelessWidget {
   final PlantModel plant;
   final VoidCallback onBack;
+  final VoidCallback? onExport;
 
-  const _AnalyticsHeader({required this.plant, required this.onBack});
+  const _AnalyticsHeader({
+    required this.plant,
+    required this.onBack,
+    required this.onExport,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -464,18 +563,87 @@ class _AnalyticsHeader extends StatelessWidget {
         title: 'Analytics',
         subtitle: plant.name,
         onBack: onBack,
-        action: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: AHSColors.primary,
-            borderRadius: BorderRadius.circular(8),
+        action: IconButton.filled(
+          tooltip: 'Export PDF report',
+          onPressed: onExport,
+          style: IconButton.styleFrom(
+            backgroundColor: AHSColors.primary,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
-          child: const Icon(
-            Icons.insights_rounded,
-            color: Colors.white,
-            size: 21,
-          ),
+          icon: const Icon(Icons.picture_as_pdf_rounded, size: 21),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnalyticsPdfPreview extends StatelessWidget {
+  final Uint8List bytes;
+  final String fileName;
+  final String plantName;
+
+  const _AnalyticsPdfPreview({
+    required this.bytes,
+    required this.fileName,
+    required this.plantName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AHSColors.bg,
+      appBar: AppBar(
+        backgroundColor: AHSColors.bg,
+        surfaceTintColor: Colors.transparent,
+        titleSpacing: 4,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Analytics PDF',
+              style: TextStyle(
+                fontFamily: 'Nunito',
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: AHSColors.textDark,
+              ),
+            ),
+            Text(
+              plantName,
+              style: const TextStyle(
+                fontFamily: 'Nunito',
+                fontSize: 11,
+                color: AHSColors.textSoft,
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: PdfPreview(
+        build: (_) async => bytes,
+        initialPageFormat: PdfPageFormat.a4,
+        pdfFileName: fileName,
+        allowPrinting: true,
+        allowSharing: true,
+        canChangePageFormat: false,
+        canChangeOrientation: false,
+        canDebug: false,
+        dynamicLayout: false,
+        maxPageWidth: 720,
+        scrollViewDecoration: const BoxDecoration(color: AHSColors.bg),
+        pdfPreviewPageDecoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1A103B27),
+              blurRadius: 16,
+              offset: Offset(0, 6),
+            ),
+          ],
         ),
       ),
     );
@@ -568,7 +736,7 @@ class _AnalyticsFilters extends StatelessWidget {
                         child: Text(
                           selectedDate == null
                               ? 'Pick timeline date'
-                              : DateFormat('MMM d, y').format(selectedDate!),
+                              : DateFormat('MM-dd-yyyy').format(selectedDate!),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -720,9 +888,9 @@ class _SummaryBand extends StatelessWidget {
 
   String _dateRange(DateTime? first, DateTime? last) {
     if (first == null || last == null) return 'No date range';
-    final fmt = DateFormat('MMM d, HH:mm');
+    final fmt = DateFormat('MM-dd HH:mm');
     if (DateUtils.isSameDay(first, last)) {
-      return '${DateFormat('MMM d, y').format(first)}  ${DateFormat('HH:mm').format(first)}-${DateFormat('HH:mm').format(last)}';
+      return '${DateFormat('MM-dd-yyyy').format(first)}  ${DateFormat('HH:mm').format(first)}-${DateFormat('HH:mm').format(last)}';
     }
     return '${fmt.format(first)} - ${fmt.format(last)}';
   }
@@ -870,7 +1038,7 @@ class _MetricTrendChart extends StatelessWidget {
   }
 
   double _chartMin(List<Map<String, dynamic>> data) {
-    final values = data.map((row) => _double(row[metric.key])).nonNulls;
+    final values = data.map((row) => _metricValue(row)).nonNulls;
     final minValue = values.isEmpty
         ? metric.min
         : values.reduce((a, b) => a < b ? a : b);
@@ -878,7 +1046,7 @@ class _MetricTrendChart extends StatelessWidget {
   }
 
   double _chartMax(List<Map<String, dynamic>> data) {
-    final values = data.map((row) => _double(row[metric.key])).nonNulls;
+    final values = data.map((row) => _metricValue(row)).nonNulls;
     final maxValue = values.isEmpty
         ? metric.max
         : values.reduce((a, b) => a > b ? a : b);
@@ -892,7 +1060,8 @@ class _MetricTrendChart extends StatelessWidget {
   ) {
     return LineChartBarData(
       spots: data.asMap().entries.map((entry) {
-        final value = _double(entry.value[key]) ?? 0;
+        final raw = _double(entry.value[key]) ?? 0;
+        final value = key == 'ph' ? SensorSnapshot.normalizePh(raw) : raw;
         return FlSpot(entry.key.toDouble(), value);
       }).toList(),
       isCurved: true,
@@ -908,6 +1077,14 @@ class _MetricTrendChart extends StatelessWidget {
     if (value == null) return null;
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString());
+  }
+
+  double? _metricValue(Map<String, dynamic> row) {
+    final value = _double(row[metric.key]);
+    if (value == null) return null;
+    return metric == _AnalyticsMetric.ph
+        ? SensorSnapshot.normalizePh(value)
+        : value;
   }
 }
 
@@ -959,7 +1136,12 @@ class _MetricInsight extends StatelessWidget {
   Widget build(BuildContext context) {
     final stats = metric.statsOf(summary);
     final anomalyCount = rows.where((row) {
-      final value = _double(row[metric.key]);
+      final raw = _double(row[metric.key]);
+      final value = raw == null
+          ? null
+          : metric == _AnalyticsMetric.ph
+          ? SensorSnapshot.normalizePh(raw)
+          : raw;
       return value != null && metric.isAnomaly(value);
     }).length;
     final latest = stats == null
@@ -1166,7 +1348,7 @@ class _HarvestBatchSummary extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      DateFormat('MMM d, y').format(event.harvestedAt),
+                      DateFormat('MM-dd-yyyy').format(event.harvestedAt),
                       style: const TextStyle(
                         fontFamily: 'Nunito',
                         fontSize: 12,
@@ -1416,7 +1598,7 @@ class _PlantDateMapCardState extends State<_PlantDateMapCard> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                'Selected ${DateFormat('MMM d, y').format(widget.selectedDate!)}',
+                'Selected ${DateFormat('MM-dd-yyyy').format(widget.selectedDate!)}',
                 style: const TextStyle(
                   fontFamily: 'Nunito',
                   fontSize: 11,
@@ -1904,73 +2086,113 @@ class _MetricCard extends StatelessWidget {
         ? '--'
         : metric.latest.toStringAsFixed(decimals);
     return Container(
-      padding: const EdgeInsets.all(15),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AHSColors.bgCard,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AHSColors.border, width: 1.5),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
                   color: color.withAlpha(28),
-                  borderRadius: BorderRadius.circular(11),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: color, size: 18),
+                child: Icon(icon, color: color, size: 21),
               ),
-              const Spacer(),
-              Text(
-                unit,
-                style: const TextStyle(
-                  fontFamily: 'Nunito',
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AHSColors.textHint,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: Theme.of(context).textTheme.titleSmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      unit.isEmpty ? 'Sensor reading' : unit,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 12),
+          Row(
             children: [
-              Text(
-                latest,
-                style: const TextStyle(
-                  fontFamily: 'Nunito',
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
-                  color: AHSColors.textDark,
-                ),
+              _MetricValue(label: 'Latest', value: latest, color: color),
+              _MetricValue(
+                label: 'Avg',
+                value: metric == null
+                    ? '--'
+                    : metric.average.toStringAsFixed(decimals),
+                color: AHSColors.textDark,
               ),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontFamily: 'Nunito',
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: AHSColors.textMid,
-                ),
+              _MetricValue(
+                label: 'Min',
+                value: metric == null
+                    ? '--'
+                    : metric.min.toStringAsFixed(decimals),
+                color: AHSColors.textDark,
               ),
-              const SizedBox(height: 3),
-              Text(
-                metric == null
-                    ? 'No values'
-                    : 'Avg ${metric.average.toStringAsFixed(decimals)}  Min ${metric.min.toStringAsFixed(decimals)}  Max ${metric.max.toStringAsFixed(decimals)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: 'Nunito',
-                  fontSize: 9,
-                  color: AHSColors.textHint,
-                ),
+              _MetricValue(
+                label: 'Max',
+                value: metric == null
+                    ? '--'
+                    : metric.max.toStringAsFixed(decimals),
+                color: AHSColors.textDark,
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricValue extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _MetricValue({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.center,
+            child: Text(
+              value,
+              maxLines: 1,
+              style: TextStyle(
+                fontFamily: 'Nunito',
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: color,
+              ),
+            ),
+          ),
+          Text(
+            label,
+            maxLines: 1,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
@@ -1988,7 +2210,7 @@ class _NoReadingsForDate extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = selectedDate == null
         ? 'No readings match this range'
-        : 'No readings on ${DateFormat('MMM d, y').format(selectedDate!)}';
+        : 'No readings on ${DateFormat('MM-dd-yyyy').format(selectedDate!)}';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),

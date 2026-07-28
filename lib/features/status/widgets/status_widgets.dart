@@ -71,7 +71,7 @@ class _Header extends StatelessWidget {
                         ? 'ESP32 online - receiving live Firebase readings'
                         : lastSeen == null
                         ? 'ESP32 offline - waiting for Firebase readings'
-                        : 'ESP32 offline - last online ${DateFormat('MMM d, HH:mm').format(lastSeen!)}',
+                        : 'ESP32 offline - last online ${DateFormat('MM-dd-yyyy HH:mm').format(lastSeen!)}',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -159,8 +159,13 @@ class _Header extends StatelessWidget {
 // ─────────────────────────────────────────────
 class _TempHumidChart extends StatelessWidget {
   final List<SensorSnapshot> history;
+  final PlantModel plant;
   final bool compact;
-  const _TempHumidChart({required this.history, this.compact = false});
+  const _TempHumidChart({
+    required this.history,
+    required this.plant,
+    this.compact = false,
+  });
 
   List<FlSpot> _spots(double Function(SensorSnapshot) fn) => history
       .asMap()
@@ -181,45 +186,41 @@ class _TempHumidChart extends StatelessWidget {
               ),
             ),
           )
-        : LineChart(_chartData());
+        : RepaintBoundary(child: LineChart(_chartData()));
 
-    return Container(
+    return AhsPanel(
       padding: EdgeInsets.fromLTRB(16, compact ? 12 : 18, 16, 10),
-      decoration: BoxDecoration(
-        color: AHSColors.bgCard,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: AHSColors.border, width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(10),
-            blurRadius: 18,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header row
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Temperature & Humidity',
-                  style: TextStyle(
-                    fontFamily: 'Nunito',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: AHSColors.textDark,
-                  ),
-                ),
-              ),
-              _ChartLegend(color: AHSColors.neonCyan, label: 'Temp °C'),
-              const SizedBox(width: 14),
-              _ChartLegend(color: AHSColors.neonGreen, label: 'Humid %'),
-            ],
+          const Text(
+            'Live Sensor Trends',
+            style: TextStyle(
+              fontFamily: 'Nunito',
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: AHSColors.textDark,
+            ),
           ),
-          SizedBox(height: compact ? 8 : 18),
+          const SizedBox(height: 8),
+          const FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                _ChartLegend(color: AHSColors.neonCyan, label: 'Temp'),
+                SizedBox(width: 10),
+                _ChartLegend(color: AHSColors.neonGreen, label: 'Hum'),
+                SizedBox(width: 10),
+                _ChartLegend(color: AHSColors.warning, label: 'pH'),
+                SizedBox(width: 10),
+                _ChartLegend(color: AHSColors.primaryMid, label: 'TDS'),
+                SizedBox(width: 10),
+                _ChartLegend(color: AHSColors.critical, label: 'Water'),
+              ],
+            ),
+          ),
+          SizedBox(height: compact ? 8 : 14),
 
           if (compact)
             Expanded(child: chart)
@@ -232,6 +233,7 @@ class _TempHumidChart extends StatelessWidget {
 
   LineChartData _chartData() {
     final count = history.length.toDouble();
+    final ranges = SensorThresholds.forPlant(plant);
 
     return LineChartData(
       minY: 0,
@@ -258,7 +260,7 @@ class _TempHumidChart extends StatelessWidget {
           axisNameWidget: const Padding(
             padding: EdgeInsets.only(bottom: 4),
             child: Text(
-              'Value',
+              'Range %',
               style: TextStyle(
                 fontFamily: 'Nunito',
                 fontSize: 10,
@@ -312,7 +314,13 @@ class _TempHumidChart extends StatelessWidget {
       lineBarsData: [
         // Temperature — cyan neon
         LineChartBarData(
-          spots: _spots((s) => s.temperature),
+          spots: _spots(
+            (s) => _normalize(
+              s.temperature,
+              ranges.temperature.min,
+              ranges.temperature.max,
+            ),
+          ),
           isCurved: true,
           preventCurveOverShooting: true,
           color: AHSColors.neonCyan,
@@ -332,7 +340,13 @@ class _TempHumidChart extends StatelessWidget {
         ),
         // Humidity — green neon
         LineChartBarData(
-          spots: _spots((s) => s.humidity),
+          spots: _spots(
+            (s) => _normalize(
+              s.humidity,
+              ranges.humidity.min,
+              ranges.humidity.max,
+            ),
+          ),
           isCurved: true,
           preventCurveOverShooting: true,
           color: AHSColors.neonGreen,
@@ -350,8 +364,48 @@ class _TempHumidChart extends StatelessWidget {
             ),
           ),
         ),
+        LineChartBarData(
+          spots: _spots((s) => _normalize(s.ph, ranges.ph.min, ranges.ph.max)),
+          isCurved: true,
+          preventCurveOverShooting: true,
+          color: AHSColors.warning,
+          barWidth: 2.4,
+          dotData: const FlDotData(show: false),
+          belowBarData: BarAreaData(show: false),
+        ),
+        LineChartBarData(
+          spots: _spots(
+            (s) => _normalize(s.tds, ranges.tds.min, ranges.tds.max),
+          ),
+          isCurved: true,
+          preventCurveOverShooting: true,
+          color: AHSColors.primaryMid,
+          barWidth: 2.4,
+          dotData: const FlDotData(show: false),
+          belowBarData: BarAreaData(show: false),
+        ),
+        LineChartBarData(
+          spots: _spots(
+            (s) => _normalize(
+              s.waterLevel,
+              0,
+              SensorThresholds.waterLevelCritical,
+            ),
+          ),
+          isCurved: true,
+          preventCurveOverShooting: true,
+          color: AHSColors.critical,
+          barWidth: 2.4,
+          dotData: const FlDotData(show: false),
+          belowBarData: BarAreaData(show: false),
+        ),
       ],
     );
+  }
+
+  double _normalize(double value, double min, double max) {
+    if (max <= min) return 0;
+    return (((value - min) / (max - min)) * 100).clamp(0.0, 100.0);
   }
 }
 
@@ -421,8 +475,7 @@ class _SensorPanelState extends State<_SensorPanel>
   @override
   void initState() {
     super.initState();
-    _glow = AnimationController(vsync: this, duration: 1400.ms)
-      ..repeat(reverse: true);
+    _glow = AnimationController(vsync: this, duration: 1400.ms)..value = 1;
   }
 
   @override
@@ -445,7 +498,7 @@ class _SensorPanelState extends State<_SensorPanel>
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: AHSColors.bgCard,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(AHSTheme.panelRadius),
           border: Border.all(
             color: _statusC.withAlpha(((0.24 + 0.28 * g) * 255).round()),
             width: 1.5,
@@ -466,7 +519,7 @@ class _SensorPanelState extends State<_SensorPanel>
               height: 40,
               decoration: BoxDecoration(
                 color: _statusC.withAlpha(22),
-                borderRadius: BorderRadius.circular(11),
+                borderRadius: BorderRadius.circular(AHSTheme.controlRadius),
               ),
               child: Icon(widget.icon, color: _statusC, size: 20),
             ),
@@ -580,7 +633,7 @@ class _TimestampPanel extends StatelessWidget {
             ? const [AHSColors.primary, AHSColors.primaryMid]
             : const [AHSColors.warning, Color(0xFFD97706)],
       ),
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(AHSTheme.panelRadius),
       boxShadow: [
         BoxShadow(
           color: AHSColors.primary.withAlpha(89),
@@ -607,7 +660,7 @@ class _TimestampPanel extends StatelessWidget {
               ),
             ),
             Text(
-              DateFormat('MMM d, y').format(ts),
+              DateFormat('MM-dd-yyyy').format(ts),
               style: const TextStyle(
                 fontFamily: 'Nunito',
                 fontSize: 12,
@@ -647,8 +700,7 @@ class _LogsFABState extends State<_LogsFAB>
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: 2200.ms)
-      ..repeat(reverse: true);
+    _c = AnimationController(vsync: this, duration: 2200.ms)..value = 1;
   }
 
   @override
@@ -714,10 +766,10 @@ class _NoData extends StatelessWidget {
   Widget build(BuildContext context) => Center(
     child: Padding(
       padding: const EdgeInsets.all(40),
-      child: Column(
+      child: const Column(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: const [
-          Text('📡', style: TextStyle(fontSize: 58)),
+        children: [
+          Icon(Icons.sensors_off_rounded, size: 58, color: AHSColors.textHint),
           SizedBox(height: 18),
           Text(
             'No sensor data found',

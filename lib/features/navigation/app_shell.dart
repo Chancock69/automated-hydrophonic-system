@@ -10,7 +10,6 @@ import 'package:ahs/features/settings/screen_settings.dart';
 import 'package:ahs/features/status/screen_status.dart';
 import 'package:ahs/services/notification_service.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -27,6 +26,7 @@ class _AppShellState extends State<AppShell> {
   Timer? _unreadTimer;
   int _selectedIndex = 0;
   int _unreadCount = 0;
+  int _dashboardGeneration = 0;
 
   static const _titles = [
     'Automated Hydrophonic System',
@@ -81,7 +81,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _selectTab(int index) {
-    setState(() => _selectedIndex = index);
+    setState(() {
+      _selectedIndex = index;
+      if (index == 0) _dashboardGeneration++;
+    });
     if (index == 1) _monitorKey.currentState?.reload();
     if (index == 2) _notificationsKey.currentState?.reload();
     if (index == 3) _historyKey.currentState?.reload();
@@ -92,9 +95,7 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final compact = screenWidth < 390;
-    final subtitle = _selectedIndex == 0
-        ? DateFormat('EEEE, MMM d').format(DateTime.now())
-        : _subtitles[_selectedIndex];
+    final subtitle = _subtitles[_selectedIndex];
 
     return PopScope(
       canPop: _selectedIndex == 0,
@@ -105,36 +106,38 @@ class _AppShellState extends State<AppShell> {
         backgroundColor: AHSColors.bg,
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          toolbarHeight: compact ? 64 : 72,
+          toolbarHeight: _selectedIndex == 0 ? 0 : (compact ? 64 : 72),
           backgroundColor: AHSColors.bg,
           surfaceTintColor: Colors.transparent,
           elevation: 0,
           titleSpacing: compact ? 12 : 16,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _titles[_selectedIndex],
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontSize: compact ? 18 : null),
-              ),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
+          title: _selectedIndex == 0
+              ? const SizedBox.shrink()
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _titles[_selectedIndex],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontSize: compact ? 18 : null,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
         ),
         body: IndexedStack(
           index: _selectedIndex,
           children: [
-            const DashboardScreen(),
+            DashboardScreen(key: ValueKey(_dashboardGeneration)),
             _ActiveMonitorTab(key: _monitorKey, active: _selectedIndex == 1),
             NotificationsScreen(
               key: _notificationsKey,

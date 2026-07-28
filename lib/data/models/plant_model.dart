@@ -28,6 +28,10 @@ class PlantModel {
   final int harvestCount;
   final bool isActive;
   final bool isHarvested;
+  final String presetKey;
+  final int chamberId;
+  final DateTime? lastNutrientAt;
+  final DateTime? lastWaterChangeAt;
 
   const PlantModel({
     this.id,
@@ -43,6 +47,10 @@ class PlantModel {
     this.harvestCount = 0,
     this.isActive = false,
     this.isHarvested = false,
+    this.presetKey = 'custom',
+    this.chamberId = 1,
+    this.lastNutrientAt,
+    this.lastWaterChangeAt,
   });
 
   PlantModel copyWith({
@@ -59,6 +67,10 @@ class PlantModel {
     int? harvestCount,
     bool? isActive,
     bool? isHarvested,
+    String? presetKey,
+    int? chamberId,
+    DateTime? lastNutrientAt,
+    DateTime? lastWaterChangeAt,
   }) => PlantModel(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -73,6 +85,10 @@ class PlantModel {
     harvestCount: harvestCount ?? this.harvestCount,
     isActive: isActive ?? this.isActive,
     isHarvested: isHarvested ?? this.isHarvested,
+    presetKey: presetKey ?? this.presetKey,
+    chamberId: chamberId ?? this.chamberId,
+    lastNutrientAt: lastNutrientAt ?? this.lastNutrientAt,
+    lastWaterChangeAt: lastWaterChangeAt ?? this.lastWaterChangeAt,
   );
 
   Map<String, dynamic> toMap() => {
@@ -89,6 +105,10 @@ class PlantModel {
     'harvestCount': harvestCount,
     'isActive': isActive ? 1 : 0,
     'isHarvested': isHarvested ? 1 : 0,
+    'presetKey': presetKey,
+    'chamberId': chamberId,
+    'lastNutrientAt': lastNutrientAt?.toIso8601String(),
+    'lastWaterChangeAt': lastWaterChangeAt?.toIso8601String(),
   };
 
   factory PlantModel.fromMap(Map<String, dynamic> m) => PlantModel(
@@ -109,5 +129,13 @@ class PlantModel {
     harvestCount: (m['harvestCount'] as int?) ?? 0,
     isActive: (m['isActive'] as int) == 1,
     isHarvested: (m['isHarvested'] as int) == 1,
+    presetKey: (m['presetKey'] as String?) ?? 'custom',
+    chamberId: (m['chamberId'] as int?) ?? 1,
+    lastNutrientAt: m['lastNutrientAt'] != null
+        ? DateTime.parse(m['lastNutrientAt'] as String)
+        : null,
+    lastWaterChangeAt: m['lastWaterChangeAt'] != null
+        ? DateTime.parse(m['lastWaterChangeAt'] as String)
+        : null,
   );
 }

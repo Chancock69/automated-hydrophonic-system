@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:ahs/app/app_theme.dart';
 import 'package:ahs/data/local/database_helper.dart';
 import 'package:ahs/data/models/app_notification.dart';
+import 'package:ahs/data/models/plant_health.dart';
 import 'package:ahs/data/models/plant_model.dart';
 import 'package:ahs/data/models/sensor_snapshot.dart';
 import 'package:ahs/data/models/sensor_thresholds.dart';
@@ -47,6 +48,7 @@ class _StatusScreenState extends State<StatusScreen>
   bool _fetching = false;
   bool _soundAlerts = true;
   String? _lastAlertSource;
+  String? _lastReminderSource;
   DateTime? _lastSuccessfulFetchAt;
   int _consecutiveFetchFailures = 0;
 
@@ -141,7 +143,7 @@ class _StatusScreenState extends State<StatusScreen>
             ),
             const SizedBox(height: 6),
             Text(
-              'Estimated runtime: 3 hours',
+              'Stored device battery estimate',
               style: const TextStyle(
                 fontFamily: 'Nunito',
                 fontSize: 13,
@@ -228,28 +230,43 @@ class _StatusScreenState extends State<StatusScreen>
       }
 
       _lastSuccessfulFetchAt = DateTime.now();
+      final latestPath =
+          '/${snap.timestamp.year}/${snap.timestamp.month.toString().padLeft(2, '0')}/${snap.timestamp.day.toString().padLeft(2, '0')}';
+      await DatabaseHelper.instance.saveFirebaseSync(
+        syncedAt: _lastSuccessfulFetchAt!,
+        path: latestPath,
+        online: _isFresh(snap),
+      );
       _consecutiveFetchFailures = 0;
       final online = _isFresh(snap);
-      setState(() {
-        _latest = snap;
-        _loading = false;
-        _hasError = false;
-        _deviceOnline = online;
-        if (_history.isEmpty || _history.last.timestamp != snap.timestamp) {
-          _history.add(snap);
-          if (_history.length > _maxHistory) _history.removeAt(0);
-        }
-      });
+      final isNewReading = _latest?.timestamp != snap.timestamp;
+      final stateChanged =
+          _loading || _hasError || _deviceOnline != online || isNewReading;
+
+      if (stateChanged) {
+        setState(() {
+          _latest = snap;
+          _loading = false;
+          _hasError = false;
+          _deviceOnline = online;
+          if (isNewReading) {
+            _history.add(snap);
+            if (_history.length > _maxHistory) _history.removeAt(0);
+          }
+        });
+      }
 
       if (!online) {
-        _stopAlarm();
+        if (isNewReading || _alarmOn) {
+          _stopAlarm();
+        }
         return;
       }
 
       PlantModel? activePlant;
       try {
         activePlant = await DatabaseHelper.instance.getActivePlant();
-        if (activePlant != null) {
+        if (activePlant != null && isNewReading) {
           await DatabaseHelper.instance.insertLog(
             snap,
             plantId: activePlant.id,
@@ -258,10 +275,19 @@ class _StatusScreenState extends State<StatusScreen>
         }
       } catch (_) {}
 
-      if (SensorThresholds.anyAnomalyIn(snap)) {
-        await _recordAlert(activePlant ?? widget.plant, snap);
+      final plant = activePlant ?? widget.plant;
+      final ranges = SensorThresholds.forPlant(plant);
+      final hasAnomaly =
+          !ranges.temperature.contains(snap.temperature) ||
+          !ranges.humidity.contains(snap.humidity) ||
+          !ranges.ph.contains(snap.ph) ||
+          !ranges.tds.contains(snap.tds) ||
+          SensorThresholds.isWaterCritical(snap.waterLevel);
+      if (hasAnomaly && isNewReading) {
+        await _recordAlert(plant, snap);
         if (mounted && !_alarmOn) _startAlarm();
       }
+      await _recordSmartReminders(plant, snap);
     } finally {
       _fetching = false;
     }
@@ -291,14 +317,15 @@ class _StatusScreenState extends State<StatusScreen>
     if (_lastAlertSource == source) return;
     _lastAlertSource = source;
 
+    final ranges = SensorThresholds.forPlant(plant);
     final issues = <String>[
-      if (SensorThresholds.isTempCritical(snapshot.temperature))
+      if (!ranges.temperature.contains(snapshot.temperature))
         'temperature ${snapshot.temperature.toStringAsFixed(1)} C',
-      if (SensorThresholds.isHumidCritical(snapshot.humidity))
+      if (!ranges.humidity.contains(snapshot.humidity))
         'humidity ${snapshot.humidity.toStringAsFixed(0)}%',
-      if (SensorThresholds.isPhCritical(snapshot.ph))
+      if (!ranges.ph.contains(snapshot.ph))
         'pH ${snapshot.ph.toStringAsFixed(2)}',
-      if (SensorThresholds.isTdsCritical(snapshot.tds))
+      if (!ranges.tds.contains(snapshot.tds))
         'TDS ${snapshot.tds.toStringAsFixed(0)} ppm',
       if (SensorThresholds.isWaterCritical(snapshot.waterLevel))
         'water distance ${snapshot.waterLevel.toStringAsFixed(1)} cm',
@@ -331,6 +358,79 @@ class _StatusScreenState extends State<StatusScreen>
     } catch (_) {
       // Monitoring must continue even when notification delivery fails.
     }
+  }
+
+  Future<void> _recordSmartReminders(
+    PlantModel plant,
+    SensorSnapshot snapshot,
+  ) async {
+    final now = DateTime.now();
+    final source = '${plant.id}-${DateTime(now.year, now.month, now.day)}';
+    if (_lastReminderSource == source) return;
+
+    final reminders = <({String title, String body, String type})>[];
+    final lastNutrient = plant.lastNutrientAt ?? plant.addedDate;
+    if (now.difference(lastNutrient).inDays >= 7) {
+      reminders.add((
+        title: 'Nutrient reminder: ${plant.name}',
+        body: 'Add nutrient solution or review TDS for ${plant.name}.',
+        type: 'nutrient',
+      ));
+    }
+    final lastWater = plant.lastWaterChangeAt ?? plant.addedDate;
+    if (now.difference(lastWater).inDays >= 14) {
+      reminders.add((
+        title: 'Water change reminder: ${plant.name}',
+        body: 'Change the tank water or inspect water quality.',
+        type: 'water_change',
+      ));
+    }
+    final harvest = plant.harvestDate;
+    if (harvest != null && !plant.isHarvested) {
+      final days = DateUtils.dateOnly(
+        harvest,
+      ).difference(DateUtils.dateOnly(now)).inDays;
+      if (days >= 0 && days <= 3) {
+        reminders.add((
+          title: 'Harvest soon: ${plant.name}',
+          body: days == 0
+              ? 'Planned harvest is today.'
+              : 'Planned harvest is in $days day${days == 1 ? '' : 's'}.',
+          type: 'harvest',
+        ));
+      }
+    }
+    if (_batteryPercent < 20) {
+      reminders.add((
+        title: 'Low battery',
+        body: 'Device battery is ${_batteryPercent.round()}%. Charge soon.',
+        type: 'battery',
+      ));
+    }
+
+    for (final reminder in reminders) {
+      final id = await DatabaseHelper.instance.insertNotification(
+        AppNotification(
+          plantId: plant.id,
+          title: reminder.title,
+          message: reminder.body,
+          type: reminder.type,
+          createdAt: now,
+          sourceTimestamp: '${reminder.type}-$source',
+        ),
+      );
+      final enabled = await DatabaseHelper.instance.getAppSetting(
+        'systemNotifications',
+      );
+      if (id != null && enabled != 'false') {
+        await NotificationService.instance.showReminder(
+          id: id,
+          title: reminder.title,
+          body: reminder.body,
+        );
+      }
+    }
+    _lastReminderSource = source;
   }
 
   void _startAlarm() {
@@ -390,8 +490,11 @@ class _StatusScreenState extends State<StatusScreen>
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-                      child: _TempHumidChart(history: _history),
-                    ).animate().fadeIn(duration: 450.ms),
+                      child: _TempHumidChart(
+                        history: _history,
+                        plant: widget.plant,
+                      ),
+                    ),
                   ),
 
                   // ── Live sensor label ──
@@ -422,103 +525,84 @@ class _StatusScreenState extends State<StatusScreen>
                     sliver: SliverList(
                       delegate: SliverChildListDelegate([
                         _SensorPanel(
-                              emoji: '🌡',
-                              icon: Icons.thermostat_rounded,
-                              label: 'Temperature',
-                              display:
-                                  '${_latest!.temperature.toStringAsFixed(1)} C',
-                              unit: 'C',
-                              min: SensorThresholds.tempMin,
-                              max: SensorThresholds.tempMax,
-                              isCritical:
-                                  _deviceOnline &&
-                                  SensorThresholds.isTempCritical(
-                                    _latest!.temperature,
-                                  ),
-                            )
-                            .animate()
-                            .fadeIn(delay: 40.ms)
-                            .slideX(begin: 0.04, end: 0),
+                          emoji: '🌡',
+                          icon: Icons.thermostat_rounded,
+                          label: 'Temp',
+                          display:
+                              '${_latest!.temperature.toStringAsFixed(1)} C',
+                          unit: 'C',
+                          min: SensorThresholds.tempMin,
+                          max: SensorThresholds.tempMax,
+                          isCritical:
+                              _deviceOnline &&
+                              SensorThresholds.isTempCritical(
+                                _latest!.temperature,
+                              ),
+                        ),
                         const SizedBox(height: 8),
                         _SensorPanel(
-                              emoji: '💦',
-                              icon: Icons.water_drop_outlined,
-                              label: 'Humidity',
-                              display:
-                                  '${_latest!.humidity.toStringAsFixed(0)}%',
-                              unit: '%',
-                              min: SensorThresholds.humidMin,
-                              max: SensorThresholds.humidMax,
-                              isCritical:
-                                  _deviceOnline &&
-                                  SensorThresholds.isHumidCritical(
-                                    _latest!.humidity,
-                                  ),
-                            )
-                            .animate()
-                            .fadeIn(delay: 80.ms)
-                            .slideX(begin: 0.04, end: 0),
+                          emoji: '💦',
+                          icon: Icons.water_drop_outlined,
+                          label: 'Humidity',
+                          display: '${_latest!.humidity.toStringAsFixed(0)}%',
+                          unit: '%',
+                          min: SensorThresholds.humidMin,
+                          max: SensorThresholds.humidMax,
+                          isCritical:
+                              _deviceOnline &&
+                              SensorThresholds.isHumidCritical(
+                                _latest!.humidity,
+                              ),
+                        ),
                         const SizedBox(height: 8),
                         _SensorPanel(
-                              emoji: '🧪',
-                              icon: Icons.science_outlined,
-                              label: 'pH Level',
-                              display: _latest!.ph.toStringAsFixed(2),
-                              unit: 'pH',
-                              min: SensorThresholds.phMin,
-                              max: SensorThresholds.phMax,
-                              isCritical:
-                                  _deviceOnline &&
-                                  SensorThresholds.isPhCritical(_latest!.ph),
-                            )
-                            .animate()
-                            .fadeIn(delay: 120.ms)
-                            .slideX(begin: 0.04, end: 0),
+                          emoji: '🧪',
+                          icon: Icons.science_outlined,
+                          label: 'pH Level',
+                          display: _latest!.ph.toStringAsFixed(2),
+                          unit: 'pH',
+                          min: SensorThresholds.phMin,
+                          max: SensorThresholds.phMax,
+                          isCritical:
+                              _deviceOnline &&
+                              SensorThresholds.isPhCritical(_latest!.ph),
+                        ),
                         const SizedBox(height: 8),
                         _SensorPanel(
-                              emoji: '💧',
-                              icon: Icons.bubble_chart_outlined,
-                              label: 'TDS',
-                              display: _latest!.tds.toStringAsFixed(0),
-                              unit: 'ppm',
-                              min: SensorThresholds.tdsMin,
-                              max: SensorThresholds.tdsMax,
-                              isCritical:
-                                  _deviceOnline &&
-                                  SensorThresholds.isTdsCritical(_latest!.tds),
-                            )
-                            .animate()
-                            .fadeIn(delay: 160.ms)
-                            .slideX(begin: 0.04, end: 0),
+                          emoji: '💧',
+                          icon: Icons.bubble_chart_outlined,
+                          label: 'TDS',
+                          display: _latest!.tds.toStringAsFixed(0),
+                          unit: 'ppm',
+                          min: SensorThresholds.tdsMin,
+                          max: SensorThresholds.tdsMax,
+                          isCritical:
+                              _deviceOnline &&
+                              SensorThresholds.isTdsCritical(_latest!.tds),
+                        ),
                         const SizedBox(height: 8),
                         _SensorPanel(
-                              emoji: '🌊',
-                              icon: Icons.waves_outlined,
-                              label: 'Water Level',
-                              display:
-                                  '${_latest!.waterLevel.toStringAsFixed(1)} cm',
-                              unit: 'distance',
-                              min: 0,
-                              max: SensorThresholds.waterLevelCritical,
-                              isCritical:
-                                  _deviceOnline &&
-                                  SensorThresholds.isWaterCritical(
-                                    _latest!.waterLevel,
-                                  ),
-                              note:
-                                  '> ${SensorThresholds.waterLevelCritical.toInt()} cm = low water',
-                            )
-                            .animate()
-                            .fadeIn(delay: 200.ms)
-                            .slideX(begin: 0.04, end: 0),
+                          emoji: '🌊',
+                          icon: Icons.waves_outlined,
+                          label: 'Water Level',
+                          display:
+                              '${_latest!.waterLevel.toStringAsFixed(1)} cm',
+                          unit: 'distance',
+                          min: 0,
+                          max: SensorThresholds.waterLevelCritical,
+                          isCritical:
+                              _deviceOnline &&
+                              SensorThresholds.isWaterCritical(
+                                _latest!.waterLevel,
+                              ),
+                          note:
+                              '> ${SensorThresholds.waterLevelCritical.toInt()} cm = low water',
+                        ),
                         const SizedBox(height: 8),
                         _TimestampPanel(
-                              ts: _latest!.timestamp,
-                              online: _deviceOnline,
-                            )
-                            .animate()
-                            .fadeIn(delay: 240.ms)
-                            .slideX(begin: 0.04, end: 0),
+                          ts: _latest!.timestamp,
+                          online: _deviceOnline,
+                        ),
                         const SizedBox(height: 12),
                       ]),
                     ),
@@ -548,6 +632,8 @@ class _StatusScreenState extends State<StatusScreen>
     }
 
     final snapshot = _latest!;
+    final ranges = SensorThresholds.forPlant(widget.plant);
+    final health = PlantHealth.from(plant: widget.plant, latest: snapshot);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
       child: LayoutBuilder(
@@ -610,9 +696,15 @@ class _StatusScreenState extends State<StatusScreen>
                 ),
               ),
               const SizedBox(height: 10),
+              _HealthRecommendationPanel(health: health),
+              const SizedBox(height: 10),
               SizedBox(
                 height: chartHeight,
-                child: _TempHumidChart(history: _history, compact: true),
+                child: _TempHumidChart(
+                  history: _history,
+                  plant: widget.plant,
+                  compact: true,
+                ),
               ),
               const SizedBox(height: 10),
               Expanded(
@@ -625,11 +717,11 @@ class _StatusScreenState extends State<StatusScreen>
                   children: [
                     _LiveMetricTile(
                       icon: Icons.thermostat_rounded,
-                      label: 'Temperature',
+                      label: 'Temp',
                       value: '${snapshot.temperature.toStringAsFixed(1)} C',
                       critical:
                           _deviceOnline &&
-                          SensorThresholds.isTempCritical(snapshot.temperature),
+                          !ranges.temperature.contains(snapshot.temperature),
                     ),
                     _LiveMetricTile(
                       icon: Icons.water_drop_outlined,
@@ -637,23 +729,21 @@ class _StatusScreenState extends State<StatusScreen>
                       value: '${snapshot.humidity.toStringAsFixed(0)}%',
                       critical:
                           _deviceOnline &&
-                          SensorThresholds.isHumidCritical(snapshot.humidity),
+                          !ranges.humidity.contains(snapshot.humidity),
                     ),
                     _LiveMetricTile(
                       icon: Icons.science_outlined,
                       label: 'pH',
                       value: snapshot.ph.toStringAsFixed(2),
                       critical:
-                          _deviceOnline &&
-                          SensorThresholds.isPhCritical(snapshot.ph),
+                          _deviceOnline && !ranges.ph.contains(snapshot.ph),
                     ),
                     _LiveMetricTile(
                       icon: Icons.bubble_chart_outlined,
                       label: 'TDS',
                       value: '${snapshot.tds.toStringAsFixed(0)} ppm',
                       critical:
-                          _deviceOnline &&
-                          SensorThresholds.isTdsCritical(snapshot.tds),
+                          _deviceOnline && !ranges.tds.contains(snapshot.tds),
                     ),
                     _LiveMetricTile(
                       icon: Icons.waves_outlined,
@@ -719,6 +809,67 @@ class _LiveMetricTile extends StatelessWidget {
                 ),
                 Text(
                   label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontSize: 11, height: 1.15),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HealthRecommendationPanel extends StatelessWidget {
+  final PlantHealth health;
+
+  const _HealthRecommendationPanel({required this.health});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = health.score >= 85
+        ? AHSColors.stable
+        : health.score >= 65
+        ? AHSColors.warning
+        : AHSColors.critical;
+    return AhsPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: color.withAlpha(22),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '${health.score}%',
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w900,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Plant health - ${health.label}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                Text(
+                  health.recommendations.join(' - '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall,

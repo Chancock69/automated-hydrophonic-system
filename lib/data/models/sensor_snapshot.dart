@@ -22,11 +22,17 @@ class SensorSnapshot {
     return double.tryParse(v.toString()) ?? fallback;
   }
 
+  static double normalizePh(double value) {
+    if (value <= 14) return value;
+    if (value <= 1400) return value / 100;
+    return value.clamp(0, 14);
+  }
+
   factory SensorSnapshot.fromJson(Map<String, dynamic> json, DateTime ts) =>
       SensorSnapshot(
         temperature: _d(json['temperature'] ?? json['Temperature']),
         humidity: _d(json['humidity'] ?? json['Humidity']),
-        ph: _d(json['PhLevel'] ?? json['ph'] ?? json['pH']),
+        ph: normalizePh(_d(json['PhLevel'] ?? json['ph'] ?? json['pH'])),
         tds: _d(json['TDS'] ?? json['tds']),
         waterLevel: _d(json['water_level'] ?? json['waterLevel']),
         timestamp: ts,

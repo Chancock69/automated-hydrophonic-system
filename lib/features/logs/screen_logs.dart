@@ -11,6 +11,7 @@ import 'package:printing/printing.dart';
 import 'package:ahs/app/app_theme.dart';
 import 'package:ahs/data/local/database_helper.dart';
 import 'package:ahs/data/models/plant_model.dart';
+import 'package:ahs/data/models/sensor_snapshot.dart';
 import 'package:ahs/data/models/sensor_thresholds.dart';
 import 'package:ahs/data/remote/firebase_http.dart';
 import 'package:ahs/shared/widgets/app_ui.dart';
@@ -49,7 +50,6 @@ class _LogsScreenState extends State<LogsScreen> {
   bool _leaving = false;
   _LogSource _source = _LogSource.none;
   String? _loadError;
-  int _metadataRequest = 0;
   int _rowsRequest = 0;
 
   @override
@@ -67,6 +67,14 @@ class _LogsScreenState extends State<LogsScreen> {
     }
     final dates = unique.values.toList()..sort((a, b) => b.compareTo(a));
     return dates;
+  }
+
+  DateTime? get _selectedLogDate {
+    final y = int.tryParse(_selYear ?? '');
+    final m = int.tryParse(_selMonth ?? '');
+    final d = int.tryParse(_selDay ?? '');
+    if (y == null || m == null || d == null) return null;
+    return DateTime(y, m, d);
   }
 
   List<String> _monthsFor(String year) {
@@ -153,103 +161,38 @@ class _LogsScreenState extends State<LogsScreen> {
     }
   }
 
-  Future<void> _mergeFirebaseMonths(String year) async {
-    final request = _metadataRequest;
-    final remote = await FirebaseHttp.instance.fetchMonths(year);
-    if (!mounted || request != _metadataRequest || _selYear != year) return;
-    final valid = remote.where((value) {
-      final parsed = int.tryParse(value);
-      return parsed != null && parsed >= 1 && parsed <= 12;
-    });
-    final months = {..._months, ...valid.map((v) => v.padLeft(2, '0'))}.toList()
-      ..sort(_sortNumericDesc);
-    final selectedMonth = _selMonth ?? (months.isEmpty ? null : months.first);
-    setState(() {
-      _months = months;
-      _selMonth = selectedMonth;
-    });
-    if (selectedMonth != null && _days.isEmpty) {
-      unawaited(_mergeFirebaseDays(year, selectedMonth));
-    }
-  }
+  Future<void> _pickLogDate() async {
+    final dates = _availableDates;
+    final now = DateTime.now();
+    final firstDate = dates.isEmpty ? DateTime(now.year - 1) : dates.last;
+    final lastDate = dates.isEmpty ? DateTime(now.year + 1) : dates.first;
+    final initial = _selectedLogDate ?? lastDate;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial.isBefore(firstDate) || initial.isAfter(lastDate)
+          ? lastDate
+          : initial,
+      firstDate: firstDate,
+      lastDate: lastDate,
+      helpText: 'Select sensor log date',
+    );
+    if (picked == null || !mounted) return;
 
-  Future<void> _mergeFirebaseDays(String year, String month) async {
-    final request = _metadataRequest;
-    final remote = await FirebaseHttp.instance.fetchDays(year, month);
-    if (!mounted ||
-        request != _metadataRequest ||
-        _selYear != year ||
-        _selMonth != month) {
-      return;
-    }
-    final selectedYear = int.tryParse(year);
-    final selectedMonth = int.tryParse(month);
-    if (selectedYear == null || selectedMonth == null) return;
-    final maxDay = DateUtils.getDaysInMonth(selectedYear, selectedMonth);
-    final valid = remote.where((value) {
-      final parsed = int.tryParse(value);
-      return parsed != null && parsed >= 1 && parsed <= maxDay;
-    });
-    final remoteDates = valid.map((value) {
-      final parsed = int.tryParse(value) ?? 1;
-      return DateTime(selectedYear, selectedMonth, parsed);
-    });
-    final days = {..._days, ...valid.map((v) => v.padLeft(2, '0'))}.toList()
-      ..sort(_sortNumericDesc);
-    final selectedDay = _selDay ?? (days.isEmpty ? null : days.first);
-    setState(() {
-      _firebaseDates = [..._firebaseDates, ...remoteDates];
-      _days = days;
-      _selDay = selectedDay;
-    });
-    if (selectedDay != null && _rows.isEmpty) {
-      unawaited(_loadRows());
-    }
-  }
-
-  void _selectYear(String? year) {
-    if (year == null || year == _selYear) return;
-    _metadataRequest++;
-    final months = _monthsFor(year);
-    final month = months.isEmpty ? null : months.first;
-    final days = month == null ? <String>[] : _daysFor(year, month);
+    final year = picked.year.toString();
+    final month = picked.month.toString().padLeft(2, '0');
+    final day = picked.day.toString().padLeft(2, '0');
     setState(() {
       _selYear = year;
-      _months = months;
       _selMonth = month;
-      _days = days;
-      _selDay = days.isEmpty ? null : days.first;
-      _rows = [];
-      _source = _LogSource.none;
-      _loadError = null;
-    });
-    if (_selDay != null) unawaited(_loadRows());
-    unawaited(_mergeFirebaseMonths(year));
-    if (month != null) unawaited(_mergeFirebaseDays(year, month));
-  }
-
-  void _selectMonth(String? month) {
-    final year = _selYear;
-    if (year == null || month == null || month == _selMonth) return;
-    _metadataRequest++;
-    final days = _daysFor(year, month);
-    setState(() {
-      _selMonth = month;
-      _days = days;
-      _selDay = days.isEmpty ? null : days.first;
-      _rows = [];
-      _source = _LogSource.none;
-      _loadError = null;
-    });
-    if (_selDay != null) unawaited(_loadRows());
-    unawaited(_mergeFirebaseDays(year, month));
-  }
-
-  void _selectDay(String? day) {
-    if (day == null || day == _selDay) return;
-    _metadataRequest++;
-    setState(() {
       _selDay = day;
+      _months = _monthsFor(year);
+      if (!_months.contains(month)) {
+        _months = [..._months, month]..sort(_sortNumericDesc);
+      }
+      _days = _daysFor(year, month);
+      if (!_days.contains(day)) {
+        _days = [..._days, day]..sort(_sortNumericDesc);
+      }
       _rows = [];
       _source = _LogSource.none;
       _loadError = null;
@@ -359,7 +302,7 @@ class _LogsScreenState extends State<LogsScreen> {
 
   Future<void> _openPdfPreview() async {
     if (_exporting || _rows.isEmpty) return;
-    final dateLabel = '$_selYear-$_selMonth-$_selDay';
+    final dateLabel = '$_selMonth-$_selDay-$_selYear';
     final fileName = 'sensor_logs_$dateLabel.pdf';
     final rows = _rows.map((row) => Map<String, dynamic>.from(row)).toList();
     setState(() => _exporting = true);
@@ -503,7 +446,7 @@ class _LogsScreenState extends State<LogsScreen> {
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
               pw.Text(
-                'Generated ${DateFormat('MMM d, yyyy - HH:mm').format(DateTime.now())}',
+                'Generated ${DateFormat('MM-dd-yyyy - HH:mm').format(DateTime.now())}',
                 style: const pw.TextStyle(
                   fontSize: 7,
                   color: PdfColors.grey600,
@@ -552,7 +495,8 @@ class _LogsScreenState extends State<LogsScreen> {
     final timestamp = DateTime.tryParse(row['timestamp']?.toString() ?? '');
     final temperature = (row['temperature'] as num?)?.toDouble();
     final humidity = (row['humidity'] as num?)?.toDouble();
-    final ph = (row['ph'] as num?)?.toDouble();
+    final phRaw = (row['ph'] as num?)?.toDouble();
+    final ph = phRaw == null ? null : SensorSnapshot.normalizePh(phRaw);
     final tds = (row['tds'] as num?)?.toDouble();
     final water = (row['waterLevel'] as num?)?.toDouble();
     return _PdfRow(
@@ -675,7 +619,7 @@ class _LogsScreenState extends State<LogsScreen> {
   }
 
   Future<void> _exportPdf() async {
-    final dateLabel = '$_selYear-$_selMonth-$_selDay';
+    final dateLabel = '$_selMonth-$_selDay-$_selYear';
 
     await Printing.layoutPdf(
       name: 'AHS_Logs_$dateLabel.pdf',
@@ -692,7 +636,8 @@ class _LogsScreenState extends State<LogsScreen> {
           // flag anomalies
           final tmp = (r['temperature'] as num?)?.toDouble();
           final hum = (r['humidity'] as num?)?.toDouble();
-          final ph = (r['ph'] as num?)?.toDouble();
+          final phRaw = (r['ph'] as num?)?.toDouble();
+          final ph = phRaw == null ? null : SensorSnapshot.normalizePh(phRaw);
           final tds = (r['tds'] as num?)?.toDouble();
           final wl = (r['waterLevel'] as num?)?.toDouble();
 
@@ -737,7 +682,7 @@ class _LogsScreenState extends State<LogsScreen> {
                   'Plant: ${widget.plant.name}   |   '
                   'Date: $dateLabel   |   '
                   'Records: ${_rows.length}   |   '
-                  'Generated: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}',
+                  'Generated: ${DateFormat('MM-dd-yyyy HH:mm').format(DateTime.now())}',
                   style: const pw.TextStyle(
                     fontSize: 9,
                     color: PdfColors.grey700,
@@ -901,48 +846,16 @@ class _LogsScreenState extends State<LogsScreen> {
 
             const SizedBox(height: 18),
 
-            // ── Dropdowns ──────────────────
+            // ── Date picker ──────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: _metaLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _years.isEmpty
                   ? const _MetaEmpty()
-                  : Row(
-                      children: [
-                        Expanded(
-                          child: _DD<String>(
-                            label: 'Year',
-                            value: _selYear,
-                            items: _years,
-                            display: (v) => v,
-                            onChanged: _selectYear,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _DD<String>(
-                            label: 'Month',
-                            value: _selMonth,
-                            items: _months,
-                            display: (v) {
-                              final n = int.tryParse(v) ?? 1;
-                              return DateFormat('MMM').format(DateTime(0, n));
-                            },
-                            onChanged: _selectMonth,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _DD<String>(
-                            label: 'Day',
-                            value: _selDay,
-                            items: _days,
-                            display: (v) => v.padLeft(2, '0'),
-                            onChanged: _selectDay,
-                          ),
-                        ),
-                      ],
+                  : _LogDatePickerPanel(
+                      selectedDate: _selectedLogDate,
+                      onPick: _pickLogDate,
                     ),
             ),
 

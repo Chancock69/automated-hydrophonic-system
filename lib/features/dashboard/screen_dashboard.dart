@@ -9,10 +9,11 @@ import 'package:ahs/app/app_theme.dart';
 import 'package:ahs/data/local/database_helper.dart';
 import 'package:ahs/data/models/harvest_event.dart';
 import 'package:ahs/data/models/plant_model.dart';
+import 'package:ahs/data/models/plant_preset.dart';
 import 'package:ahs/features/analytics/screen_analytics.dart';
 import 'package:ahs/features/harvest/screen_harvest_history.dart';
 import 'package:ahs/features/plant_area/screen_plant_area.dart';
-import 'package:ahs/features/status/screen_status.dart';
+import 'package:ahs/features/status/screen_plant_status_summary.dart';
 import 'package:ahs/shared/widgets/app_ui.dart';
 import 'package:ahs/shared/widgets/plant_image.dart';
 
@@ -98,7 +99,7 @@ class _HarvestDialogState extends State<_HarvestDialog> {
           const SizedBox(height: 14),
           TextField(
             controller: _weightController,
-            autofocus: true,
+            autofocus: false,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _submit(),
@@ -208,7 +209,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Estimated runtime: 3 hours',
+              'Stored device battery estimate',
               style: const TextStyle(
                 fontFamily: 'Nunito',
                 fontSize: 13,
@@ -426,14 +427,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     builder: (_) => _AddPlantSheet(onSaved: _reload, initialPlant: plant),
   );
 
-  void _openHarvestHistory() => Navigator.push(
-    context,
-    MaterialPageRoute(builder: (_) => HarvestHistoryScreen(plants: _plants)),
-  );
+  Future<void> _openHarvestHistory() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => HarvestHistoryScreen(plants: _plants)),
+    );
+    if (!mounted) return;
+    await _reload();
+  }
 
   void _openStatus(PlantModel plant) => Navigator.push(
     context,
-    MaterialPageRoute(builder: (_) => StatusScreen(plant: plant)),
+    MaterialPageRoute(builder: (_) => PlantStatusSummaryScreen(plant: plant)),
   );
 
   void _openAnalytics(PlantModel plant) => Navigator.push(
@@ -465,73 +470,100 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final hasActive = _active != null;
     final visiblePlants = _plants.where((plant) => !plant.isHarvested).toList();
+    final canAddPlant = visiblePlants.isEmpty;
 
     if (MediaQuery.sizeOf(context).width < 700) {
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-        physics: const BouncingScrollPhysics(),
-        children: [
-          _CompactChamberCard(
-            active: _active,
-            batteryPercent: _batteryPercent,
-            onBatteryTap: _showBatterySettings,
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 420.0,
-            child: _DashboardGraphStack(
-              plants: _plants,
-              harvestEvents: _harvestEvents,
-              activePlant: _active,
-              height: 400.0,
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          const plantPagerHeight = 112.0;
+
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+            child: Column(
+              children: [
+                const _CompactHomeHeader(),
+                const SizedBox(height: 8),
+                _CompactChamberCard(
+                  active: _active,
+                  batteryPercent: _batteryPercent,
+                  onBatteryTap: _showBatterySettings,
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, graphConstraints) {
+                      final graphHeight = graphConstraints.maxHeight;
+                      return _DashboardGraphStack(
+                        plants: _plants,
+                        harvestEvents: _harvestEvents,
+                        activePlant: _active,
+                        height: (graphHeight - 22).clamp(0.0, graphHeight),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Text(
+                      'My Plants',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const Spacer(),
+                    ElevatedButton.icon(
+                      onPressed: canAddPlant ? _openAddSheet : null,
+                      icon: const Icon(Icons.add_rounded, size: 18),
+                      label: const Text('Add plant'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: plantPagerHeight,
+                  child: ClipRect(
+                    child: _loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : visiblePlants.isEmpty
+                        ? const _CompactEmptyPlants()
+                        : PageView.builder(
+                            controller: PageController(viewportFraction: 0.98),
+                            padEnds: false,
+                            itemCount: visiblePlants.length,
+                            itemBuilder: (_, index) {
+                              final plant = visiblePlants[index];
+                              final locked =
+                                  hasActive &&
+                                  !plant.isActive &&
+                                  !plant.isHarvested;
+                              return Padding(
+                                padding: EdgeInsets.only(
+                                  right: index == visiblePlants.length - 1
+                                      ? 0
+                                      : 10,
+                                ),
+                                child: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: _CompactPlantCard(
+                                    plant: plant,
+                                    locked: locked,
+                                    onActivate: () => _setActive(plant),
+                                    onHarvest: () => _harvest(plant),
+                                    onDelete: () => _delete(plant),
+                                    onEdit: () => _openEditSheet(plant),
+                                    onArea: () => _openPlantArea(plant),
+                                    onStatus: () => _openStatus(plant),
+                                    onAnalytics: () => _openAnalytics(plant),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text('My Plants', style: Theme.of(context).textTheme.titleMedium),
-              const Spacer(),
-              ElevatedButton.icon(
-                onPressed: _openAddSheet,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('Add plant'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (_loading)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: CircularProgressIndicator(),
-              ),
-            )
-          else if (visiblePlants.isEmpty)
-            const _CompactEmptyPlants()
-          else
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: visiblePlants.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
-              itemBuilder: (_, index) {
-                final plant = visiblePlants[index];
-                final locked =
-                    hasActive && !plant.isActive && !plant.isHarvested;
-                return _CompactPlantCard(
-                  plant: plant,
-                  locked: locked,
-                  onActivate: () => _setActive(plant),
-                  onHarvest: () => _harvest(plant),
-                  onDelete: () => _delete(plant),
-                  onEdit: () => _openEditSheet(plant),
-                  onArea: () => _openPlantArea(plant),
-                  onStatus: () => _openStatus(plant),
-                  onAnalytics: () => _openAnalytics(plant),
-                );
-              },
-            ),
-        ],
+          );
+        },
       );
     }
 
@@ -576,7 +608,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            DateFormat('EEEE, MMM d').format(DateTime.now()),
+                            DateFormat('MM-dd-yyyy').format(DateTime.now()),
                             style: const TextStyle(
                               fontFamily: 'Nunito',
                               fontSize: 12,
@@ -651,7 +683,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                         const SizedBox(width: 8),
                         ElevatedButton.icon(
-                          onPressed: _openAddSheet,
+                          onPressed: canAddPlant ? _openAddSheet : null,
                           icon: const Icon(Icons.add_rounded, size: 18),
                           label: const Text('Add plant'),
                         ),

@@ -75,7 +75,7 @@ class _ChamberCard extends StatelessWidget {
                       const SizedBox(width: 5),
                       Expanded(
                         child: Text(
-                          'Harvest ${DateFormat('MMM d, y').format(active!.harvestDate!)}',
+                          'Harvest ${DateFormat('MM-dd-yyyy').format(active!.harvestDate!)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -150,6 +150,61 @@ class _ChamberCard extends StatelessWidget {
   }
 }
 
+class _CompactHomeHeader extends StatelessWidget {
+  const _CompactHomeHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AHSColors.bgCard,
+        borderRadius: BorderRadius.circular(AHSTheme.panelRadius),
+        border: Border.all(color: AHSColors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: AHSColors.primary.withAlpha(20),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: const Icon(
+              Icons.eco_rounded,
+              color: AHSColors.primary,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Automated Hydrophonic System',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  DateFormat('MM-dd-yyyy').format(DateTime.now()),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CompactChamberCard extends StatelessWidget {
   final PlantModel? active;
   final double batteryPercent;
@@ -164,8 +219,8 @@ class _CompactChamberCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 88,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      height: 76,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [AHSColors.primary, AHSColors.primaryMid],
@@ -189,57 +244,56 @@ class _CompactChamberCard extends StatelessWidget {
                 const Text(
                   'CHAMBER 01',
                   style: TextStyle(
-                    fontSize: 9,
+                    fontSize: 8,
                     fontWeight: FontWeight.w700,
                     color: Colors.white60,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   active?.name ?? 'No Plant Active',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 18,
+                    fontSize: 17,
                     fontWeight: FontWeight.w800,
                     color: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   active == null
                       ? 'Standby'
                       : active!.harvestDate == null
                       ? 'Active monitoring'
-                      : 'Harvest ${DateFormat('MMM d').format(active!.harvestDate!)}',
+                      : 'Harvest ${DateFormat('MM-dd').format(active!.harvestDate!)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                  style: const TextStyle(fontSize: 10, color: Colors.white70),
                 ),
               ],
             ),
           ),
-          IconButton(
-            tooltip: 'Device battery',
-            onPressed: onBatteryTap,
-            color: Colors.white,
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.battery_5_bar_rounded),
-                Positioned(
-                  right: -10,
-                  top: -8,
-                  child: Text(
-                    '${batteryPercent.round().clamp(0, 100)}',
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onBatteryTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _BatteryTopBarWidget(percent: batteryPercent),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${batteryPercent.round().clamp(0, 100)}%',
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 9,
+                      fontSize: 10,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 4),
@@ -247,8 +301,8 @@ class _CompactChamberCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             child: PlantImage(
               imagePath: active?.imagePath,
-              width: 58,
-              height: 58,
+              width: 52,
+              height: 52,
               fallback: Container(
                 color: Colors.white.withAlpha(36),
                 child: const Icon(
@@ -337,9 +391,10 @@ class _CompactPlantCard extends StatelessWidget {
     return Opacity(
       opacity: locked ? 0.62 : 1,
       child: AhsPanel(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(7),
         borderColor: active ? AHSColors.primaryLight : AHSColors.border,
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
@@ -347,8 +402,8 @@ class _CompactPlantCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                   child: PlantImage(
                     imagePath: plant.imagePath,
-                    width: 46,
-                    height: 46,
+                    width: 42,
+                    height: 42,
                     fallback: Container(
                       color: AHSColors.primaryGlow,
                       child: const Icon(
@@ -359,11 +414,12 @@ class _CompactPlantCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 9),
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
                         children: [
@@ -382,14 +438,14 @@ class _CompactPlantCard extends StatelessWidget {
                             ),
                         ],
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Text(
                         plant.description,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Text(
                         '${plant.quantity} planted - ${plant.harvestType.label}',
                         maxLines: 1,
@@ -418,7 +474,7 @@ class _CompactPlantCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             Row(
               children: active
                   ? [
@@ -427,19 +483,19 @@ class _CompactPlantCard extends StatelessWidget {
                         icon: Icons.monitor_heart_outlined,
                         onTap: onStatus,
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
                       _CompactPlantAction(
                         tooltip: 'Open analytics',
                         icon: Icons.insights_outlined,
                         onTap: onAnalytics,
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
                       _CompactPlantAction(
                         tooltip: 'Open plant area',
                         icon: Icons.grid_view_rounded,
                         onTap: onArea,
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
                       _CompactPlantAction(
                         tooltip: 'Record harvest',
                         icon: Icons.agriculture_rounded,
@@ -455,11 +511,13 @@ class _CompactPlantCard extends StatelessWidget {
                         icon: Icons.power_settings_new_rounded,
                         onTap: locked ? null : onActivate,
                       ),
+                      const SizedBox(width: 4),
                       _CompactPlantAction(
                         tooltip: 'Open analytics',
                         icon: Icons.insights_outlined,
                         onTap: onAnalytics,
                       ),
+                      const SizedBox(width: 4),
                       _CompactPlantAction(
                         tooltip: 'Edit plant',
                         icon: Icons.edit_outlined,
@@ -492,17 +550,21 @@ class _CompactPlantAction extends StatelessWidget {
     return Expanded(
       child: Tooltip(
         message: tooltip,
-        child: IconButton(
-          onPressed: onTap,
-          color: color,
-          padding: const EdgeInsets.all(4),
-          style: IconButton.styleFrom(
-            backgroundColor: color.withAlpha(18),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(6),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withAlpha(18),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Icon(icon, size: 15, color: color),
             ),
           ),
-          icon: Icon(icon, size: 16),
         ),
       ),
     );
@@ -863,13 +925,13 @@ class _HarvestScheduleGraph extends StatelessWidget {
               _TrackerPill(
                 label: 'Upcoming',
                 value: upcoming.toString(),
-                color: AHSColors.primaryMid,
+                color: AHSColors.stable,
               ),
               const SizedBox(width: 8),
               _TrackerPill(
                 label: 'Early',
                 value: early.toString(),
-                color: AHSColors.stable,
+                color: AHSColors.primaryMid,
               ),
               const SizedBox(width: 8),
               _TrackerPill(
@@ -1023,7 +1085,8 @@ class _HarvestWeightGraph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final recentEvents = events.take(4).toList();
+    final compact = MediaQuery.sizeOf(context).width < 700;
+    final recentEvents = events.take(compact ? 3 : 4).toList();
     final totalWeight = events.fold<double>(
       0,
       (total, event) => total + event.weightKg,
@@ -1047,7 +1110,8 @@ class _LifeRateGraph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final recentEvents = events.take(4).toList();
+    final compact = MediaQuery.sizeOf(context).width < 700;
+    final recentEvents = events.take(compact ? 3 : 4).toList();
     final avgLife = events.isEmpty
         ? 0.0
         : events.fold<double>(0, (total, event) => total + event.lifeRate) /
@@ -1210,7 +1274,7 @@ String _harvestEventDetail(HarvestEvent event, List<HarvestEvent> allEvents) {
             item.markedDone == event.markedDone,
   );
   final harvestNumber = index < 0 ? 1 : index + 1;
-  final date = DateFormat('MMM d').format(event.harvestedAt);
+  final date = DateFormat('MM-dd').format(event.harvestedAt);
   final isMultipleHarvest = sameBatch.length > 1 || !event.markedDone;
   if (!isMultipleHarvest) return 'Batch harvest - $date';
 
@@ -1330,7 +1394,7 @@ class _PlantCalendar extends StatelessWidget {
     return Column(
       children: [
         _CalendarMonthNav(month: month, onPrevious: onPrevious, onNext: onNext),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Row(
           children: const [
             _CalendarLegend(color: Color(0xFF2563EB), label: 'Planted'),
@@ -1342,7 +1406,7 @@ class _PlantCalendar extends StatelessWidget {
             _CalendarLegend(color: AHSColors.neonCyan, label: 'Multi'),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Row(
           children: const ['S', 'M', 'T', 'W', 'T', 'F', 'S']
               .map(
@@ -1361,27 +1425,36 @@ class _PlantCalendar extends StatelessWidget {
               )
               .toList(),
         ),
-        const SizedBox(height: 5),
+        const SizedBox(height: 4),
         Expanded(
-          child: GridView.builder(
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: 42,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 7,
-              mainAxisSpacing: 4,
-              crossAxisSpacing: 4,
-              childAspectRatio: 1.15,
-            ),
-            itemBuilder: (_, index) {
-              final dayNumber = index - leading + 1;
-              if (dayNumber < 1 || dayNumber > daysInMonth) {
-                return const SizedBox.shrink();
-              }
-              final date = DateTime(month.year, month.month, dayNumber);
-              return _CalendarDayCell(
-                day: dayNumber,
-                markers: _markersFor(date),
-                inTimeline: _isInTimeline(date),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              const spacing = 3.0;
+              final cellWidth = (constraints.maxWidth - (spacing * 6)) / 7;
+              final cellHeight = (constraints.maxHeight - (spacing * 5)) / 6;
+              final ratio = cellHeight <= 0 ? 1.2 : cellWidth / cellHeight;
+
+              return GridView.builder(
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: 42,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 7,
+                  mainAxisSpacing: spacing,
+                  crossAxisSpacing: spacing,
+                  childAspectRatio: ratio,
+                ),
+                itemBuilder: (_, index) {
+                  final dayNumber = index - leading + 1;
+                  if (dayNumber < 1 || dayNumber > daysInMonth) {
+                    return const SizedBox.shrink();
+                  }
+                  final date = DateTime(month.year, month.month, dayNumber);
+                  return _CalendarDayCell(
+                    day: dayNumber,
+                    markers: _markersFor(date),
+                    inTimeline: _isInTimeline(date),
+                  );
+                },
               );
             },
           ),
@@ -2348,6 +2421,7 @@ class _AddPlantSheetState extends State<_AddPlantSheet> {
   DateTime? _harvestDate;
   int _quantity = 1;
   PlantHarvestType _harvestType = PlantHarvestType.single;
+  String _presetKey = PlantPreset.custom.key;
   bool _saving = false;
   bool get _editing => widget.initialPlant != null;
 
@@ -2362,7 +2436,20 @@ class _AddPlantSheetState extends State<_AddPlantSheet> {
       _harvestDate = plant.harvestDate;
       _quantity = plant.quantity;
       _harvestType = plant.harvestType;
+      _presetKey = plant.presetKey;
     }
+  }
+
+  void _applyPreset(String key) {
+    final preset = PlantPreset.byKey(key);
+    setState(() {
+      _presetKey = preset.key;
+      if (!_editing && preset.key != PlantPreset.custom.key) {
+        _nameCtrl.text = preset.label;
+        _descCtrl.text = preset.description;
+        _harvestDate = DateTime.now().add(Duration(days: preset.daysToHarvest));
+      }
+    });
   }
 
   Future<void> _pickImage() async {
@@ -2436,6 +2523,10 @@ class _AddPlantSheetState extends State<_AddPlantSheet> {
           harvestDate: _harvestDate,
           quantity: _quantity,
           harvestType: _harvestType,
+          presetKey: _presetKey,
+          chamberId: 1,
+          lastNutrientAt: DateTime.now(),
+          lastWaterChangeAt: DateTime.now(),
         );
         await DatabaseHelper.instance.insertPlant(plant);
       } else {
@@ -2447,6 +2538,8 @@ class _AddPlantSheetState extends State<_AddPlantSheet> {
             harvestDate: _harvestDate,
             quantity: _quantity,
             harvestType: _harvestType,
+            presetKey: _presetKey,
+            chamberId: 1,
           ),
         );
       }
@@ -2601,6 +2694,8 @@ class _AddPlantSheetState extends State<_AddPlantSheet> {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                   const SizedBox(height: 12),
+                  _PresetPicker(value: _presetKey, onChanged: _applyPreset),
+                  const SizedBox(height: 14),
                   _QuantityPicker(
                     value: _quantity,
                     onChanged: (value) => setState(() => _quantity = value),
@@ -2656,7 +2751,7 @@ class _AddPlantSheetState extends State<_AddPlantSheet> {
                           Expanded(
                             child: Text(
                               _harvestDate != null
-                                  ? 'Harvest: ${DateFormat('MMM d, y @ h:mm a').format(_harvestDate!)}'
+                                  ? 'Harvest: ${DateFormat('MM-dd-yyyy @ h:mm a').format(_harvestDate!)}'
                                   : 'Set harvest date & time (optional)',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -2766,6 +2861,58 @@ class _ImagePickerPlaceholder extends StatelessWidget {
             fontSize: 11,
             color: AHSColors.textSoft,
             height: 1.1,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PresetPicker extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  const _PresetPicker({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final preset = PlantPreset.byKey(value);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Plant Preset',
+          style: TextStyle(
+            fontFamily: 'Nunito',
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AHSColors.textMid,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: AHSColors.bgCard,
+            borderRadius: BorderRadius.circular(AHSTheme.controlRadius),
+            border: Border.all(color: AHSColors.border),
+          ),
+          child: DropdownButton<String>(
+            value: preset.key,
+            isExpanded: true,
+            underline: const SizedBox(),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+            items: PlantPreset.presets
+                .map(
+                  (preset) => DropdownMenuItem(
+                    value: preset.key,
+                    child: Text(preset.label),
+                  ),
+                )
+                .toList(),
+            onChanged: (next) {
+              if (next != null) onChanged(next);
+            },
           ),
         ),
       ],
